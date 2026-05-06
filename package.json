@@ -10,8 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@deck.gl/core": "^8.9.0",
+    "@deck.gl/layers": "^8.9.0",
+    "@deck.gl/react": "^8.9.0",
+    "mapbox-gl": "^2.15.0",
+    "maplibre-gl": "^4.7.1",
     "react": "^19.2.5",
-    "react-dom": "^19.2.5"
+    "react-dom": "^19.2.5",
+    "react-map-gl": "^7.1.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
