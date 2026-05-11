@@ -12,6 +12,8 @@ interface HttpResponse {
   type: string;
   timestamp?: number;
   data?: Vehicle[];
+  isRunning?: boolean;
+  speedFactor?: number;
   [key: string]: unknown;
 }
 
@@ -19,6 +21,8 @@ interface UseWebSocketReturn {
   vehicles: Vehicle[];
   isConnected: boolean;
   error: string | null;
+  isPlaying: boolean;
+  speed: number;
   sendCommand: (command: string, value?: unknown) => void;
 }
 
@@ -26,10 +30,15 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
   const socketRef = useRef<WebSocket | null>(null);
   const socketUrl = url.replace('http://', 'ws://').replace('https://', 'wss://');
 
-  // S'abonner au flux WebSocket
+  const latestVehiclesRef = useRef<Vehicle[] | null>(null);
+  const frameRef = useRef<number | null>(null);
+
+  //abonnement au flux WebSocket
   useEffect(() => {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
@@ -44,7 +53,22 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
 
       if (data.type === 'update') {
         if (Array.isArray(data.data)) {
-          setVehicles(data.data as Vehicle[]);
+          latestVehiclesRef.current = data.data as Vehicle[];
+          if (frameRef.current === null) {
+            frameRef.current = requestAnimationFrame(() => {
+              if (latestVehiclesRef.current) {
+                setVehicles(latestVehiclesRef.current);
+              }
+              frameRef.current = null;
+            });
+          }
+        }
+      } else if (data.type === 'status') {
+        if (data.isRunning !== undefined) {
+          setIsPlaying(data.isRunning);
+        }
+        if (data.speedFactor !== undefined) {
+          setSpeed(data.speedFactor);
         }
       }
     };
@@ -59,12 +83,15 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     };
 
     return () => {
+      if (frameRef.current !== null) {
+        cancelAnimationFrame(frameRef.current);
+      }
       socket.close();
       socketRef.current = null;
     };
   }, [socketUrl]);
 
-  // Envoyer une commande au serveur
+  //envoi d'une commande au serveur
   const sendCommand = useCallback((command: string, value?: unknown) => {
     const payload: Record<string, unknown> = value !== undefined ? { command, value } : { command };
 
@@ -77,5 +104,5 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     console.log('Commande envoyée:', payload);
   }, []);
 
-  return { vehicles, isConnected, error, sendCommand };
+  return { vehicles, isConnected, error, isPlaying, speed, sendCommand };
 };

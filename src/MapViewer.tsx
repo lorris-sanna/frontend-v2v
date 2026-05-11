@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MapGL, { NavigationControl } from 'react-map-gl/maplibre';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer } from '@deck.gl/layers';
@@ -25,6 +25,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialLatitude = 48.3,
   initialZoom = 11,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
     latitude: initialLatitude,
@@ -33,11 +35,58 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     bearing: 0,
   });
 
-  const [hasCentered, setHasCentered] = useState(false);
+  const hasCenteredRef = useRef(false);
+
+  const sameViewState = (a: typeof viewState, b: typeof viewState) =>
+    a.longitude === b.longitude &&
+    a.latitude === b.latitude &&
+    a.zoom === b.zoom &&
+    a.pitch === b.pitch &&
+    a.bearing === b.bearing;
+
+  useEffect(() => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    const updateSize = () => {
+      const { width, height } = container.getBoundingClientRect();
+      setSize({
+        width: Math.max(0, Math.round(width)),
+        height: Math.max(0, Math.round(height)),
+      });
+    };
+
+    updateSize();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateSize);
+
+      return () => {
+        window.removeEventListener('resize', updateSize);
+      };
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateSize();
+    });
+
+    observer.observe(container);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
 
   //ce hook s'active des que la liste des vehicules change
   useEffect(() => {
-    if (!hasCentered && vehicles.length > 0) {
+    if (hasCenteredRef.current || vehicles.length === 0) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
       let minX = Infinity, maxX = -Infinity;
       let minY = Infinity, maxY = -Infinity;
 
@@ -58,66 +107,63 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         longitude: centerLon,
         latitude: centerLat
       }));
-      
-      setHasCentered(true);
-    }
-  }, [vehicles, hasCentered]);
+      hasCenteredRef.current = true;
+    });
 
-  const mapStyle = {
-    version: 8 as const,
-    sources: {
-      osm: {
-        type: 'raster' as const,
-        tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
-        tileSize: 256,
-      },
-    },
-    layers: [
-      {
-        id: 'osm',
-        type: 'raster' as const,
-        source: 'osm',
-      },
-    ],
-  };
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [vehicles]);
 
-  const layers = [
-    new ScatterplotLayer({
-      id: 'vehicle-layer',
-      data: vehicles,
-      pickable: true,
-      opacity: 0.9,
-      radiusScale: 2.2,
-      radiusMinPixels: 3,
-      radiusMaxPixels: 14,
-      getPosition: (d: Vehicle) => {
-        //lon et lat pour Deck.gl
-        return [d.x, d.y];
+  const mapStyle = useMemo(
+    () => ({
+      version: 8 as const,
+      sources: {
+        osm: {
+          type: 'raster' as const,
+          tiles: ['https://a.tile.openstreetmap.org/{z}/{x}/{y}.png'],
+          tileSize: 256,
+        },
       },
-      getRadius: 3,
-      getFillColor: (d: Vehicle) => {
-        //couleur selon la vitesse
-        const speed = Math.min(d.vitesse, 100);
-        return [255 - (speed * 2), speed * 2, 0, 200];
-      },
-      getLineColor: [0, 0, 0, 255],
-      lineWidthMinPixels: 1,
-      onHover: (info: any) => {
-        if (info.object) {
-          console.log(`Voiture ${info.object.id}: vitesse ${info.object.vitesse} km/h`);
-        }
-      },
-      updateTriggers: {
-        getFillColor: [vehicles],
-      },
-      transitions: {
-        getPosition: {
-          duration: 220,
-          easing: (t: number) => t
-        }
-      }
+      layers: [
+        {
+          id: 'osm',
+          type: 'raster' as const,
+          source: 'osm',
+        },
+      ],
     }),
-  ];
+    [],
+  );
+
+  const layers = useMemo(
+    () => [
+      new ScatterplotLayer({
+        id: 'vehicle-layer',
+        data: vehicles,
+        pickable: true,
+        opacity: 0.9,
+        radiusScale: 2.2,
+        radiusMinPixels: 3,
+        radiusMaxPixels: 14,
+        getPosition: (d: Vehicle) => [d.x, d.y],
+        getRadius: 3,
+        getFillColor: (d: Vehicle) => {
+          const speed = Math.min(d.vitesse, 100);
+          return [255 - speed * 2, speed * 2, 0, 200];
+        },
+        getLineColor: [0, 0, 0, 255],
+        lineWidthMinPixels: 1,
+        transitions: {
+          getPosition: {
+            duration: 180,
+            easing: (t: number) => t,
+          },
+        },
+      }),
+    ],
+    [vehicles],
+  );
 
   const handleMapContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -132,40 +178,52 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   return (
     <div
+      ref={containerRef}
       style={{ width: '100%', height: '100%', position: 'relative' }}
       onContextMenu={handleMapContextMenu}
       onMouseUp={handleMapMouseUp}
     >
-      <DeckGL
-        initialViewState={viewState}
-        controller={true}
-        layers={layers}
-        onViewStateChange={(e: { viewState: typeof viewState }) => setViewState(e.viewState)}
-        style={{ width: '100%', height: '100%' }}
-      >
-        <MapGL
-          {...viewState}
-          onMove={(evt) => setViewState(evt.viewState)}
-          mapStyle={mapStyle}
-          attributionControl={true}
+      {size.width > 0 && size.height > 0 && (
+        <DeckGL
+          viewState={viewState}
+          controller={true}
+          layers={layers}
+          onViewStateChange={({ viewState: nextViewState }: { viewState: typeof viewState }) => {
+            const normalizedViewState = nextViewState as typeof viewState;
+
+            if (!sameViewState(viewState, normalizedViewState)) {
+              setViewState(normalizedViewState);
+            }
+          }}
+          width={size.width}
+          height={size.height}
+          style={{ position: 'absolute', inset: 0 }}
         >
-          <NavigationControl position="top-left" />
-          <div
-            style={{
-              position: 'absolute',
-              bottom: 10,
-              left: 10,
-              background: 'rgba(255, 255, 255, 0.8)',
-              padding: '8px 12px',
-              borderRadius: '4px',
-              fontSize: '12px',
-              zIndex: 10,
-            }}
+          <MapGL
+            {...viewState}
+            mapStyle={mapStyle}
+            attributionControl={true}
+            reuseMaps={true}
+            style={{ position: 'absolute', inset: 0 }}
           >
-            © OpenStreetMap contributors
-          </div>
-        </MapGL>
-      </DeckGL>
+            <NavigationControl position="top-left" />
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 10,
+                left: 10,
+                background: 'rgba(255, 255, 255, 0.8)',
+                padding: '8px 12px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                zIndex: 10,
+              }}
+            >
+              © OpenStreetMap contributors
+            </div>
+          </MapGL>
+        </DeckGL>
+      )}
 
       <div
         style={{
