@@ -23,6 +23,9 @@ interface UseWebSocketReturn {
   error: string | null;
   isPlaying: boolean;
   speed: number;
+  serverMessage: string | null;
+  loadState: 'idle' | 'loading' | 'loaded' | 'error';
+  loadEventId: number;
   sendCommand: (command: string, value?: unknown) => void;
 }
 
@@ -32,16 +35,21 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
   const [error, setError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [serverMessage, setServerMessage] = useState<string | null>(null);
+  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
+  const [loadEventId, setLoadEventId] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
   const socketUrl = url.replace('http://', 'ws://').replace('https://', 'wss://');
 
   const latestVehiclesRef = useRef<Vehicle[] | null>(null);
   const frameRef = useRef<number | null>(null);
+  const isCleaningUp = useRef(false);
 
   //abonnement au flux WebSocket
   useEffect(() => {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
+    isCleaningUp.current = false;
 
     socket.onopen = () => {
       setIsConnected(true);
@@ -49,6 +57,8 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     };
 
     socket.onmessage = (event) => {
+      if (isCleaningUp.current) return;
+      
       const data: HttpResponse = JSON.parse(event.data);
 
       if (data.type === 'update') {
@@ -56,7 +66,7 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
           latestVehiclesRef.current = data.data as Vehicle[];
           if (frameRef.current === null) {
             frameRef.current = requestAnimationFrame(() => {
-              if (latestVehiclesRef.current) {
+              if (latestVehiclesRef.current && !isCleaningUp.current) {
                 setVehicles(latestVehiclesRef.current);
               }
               frameRef.current = null;
@@ -70,6 +80,20 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
         if (data.speedFactor !== undefined) {
           setSpeed(data.speedFactor);
         }
+      } else if (data.type === 'info') {
+        const message = typeof data.message === 'string' ? data.message : 'Chargement en cours...';
+        setServerMessage(message);
+        setLoadState('loading');
+        setLoadEventId((prev) => prev + 1);
+      } else if (data.type === 'loaded') {
+        setServerMessage(null);
+        setLoadState('loaded');
+        setLoadEventId((prev) => prev + 1);
+      } else if (data.type === 'error') {
+        const message = typeof data.message === 'string' ? data.message : 'Erreur côté serveur.';
+        setServerMessage(message);
+        setLoadState('error');
+        setLoadEventId((prev) => prev + 1);
       }
     };
 
@@ -83,10 +107,15 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     };
 
     return () => {
+      isCleaningUp.current = true;
       if (frameRef.current !== null) {
         cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
       }
-      socket.close();
+      latestVehiclesRef.current = null;
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      }
       socketRef.current = null;
     };
   }, [socketUrl]);
@@ -104,5 +133,5 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     console.log('Commande envoyée:', payload);
   }, []);
 
-  return { vehicles, isConnected, error, isPlaying, speed, sendCommand };
+  return { vehicles, isConnected, error, isPlaying, speed, serverMessage, loadState, loadEventId, sendCommand };
 };

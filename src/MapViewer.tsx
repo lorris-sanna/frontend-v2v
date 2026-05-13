@@ -12,11 +12,20 @@ interface Vehicle {
   vitesse: number;
 }
 
+interface BBoxSelection {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+}
+
 interface MapViewerProps {
   vehicles: Vehicle[];
   initialLongitude?: number;
   initialLatitude?: number;
   initialZoom?: number;
+  isSelectingBbox?: boolean;
+  onBboxSelected?: (bbox: BBoxSelection) => void;
 }
 
 export const MapViewer: React.FC<MapViewerProps> = ({
@@ -24,8 +33,11 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialLongitude = 7.5,
   initialLatitude = 48.3,
   initialZoom = 11,
+  isSelectingBbox = false,
+  onBboxSelected,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
@@ -36,6 +48,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   });
 
   const hasCenteredRef = useRef(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
 
   const sameViewState = (a: typeof viewState, b: typeof viewState) =>
     a.longitude === b.longitude &&
@@ -138,7 +152,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   const layers = useMemo(
     () => [
-      new ScatterplotLayer({
+      new ScatterplotLayer<Vehicle>({
         id: 'vehicle-layer',
         data: vehicles,
         pickable: true,
@@ -154,6 +168,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         },
         getLineColor: [0, 0, 0, 255],
         lineWidthMinPixels: 1,
+        updateTriggers: {
+          getPosition: [vehicles],
+          getFillColor: [vehicles],
+        },
         transitions: {
           getPosition: {
             duration: 180,
@@ -169,24 +187,138 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     event.preventDefault();
   };
 
-  const handleMapMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.button === 2) {
-      event.preventDefault();
-      event.stopPropagation();
+  const getRelativePoint = (event: React.MouseEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+    if (!container) {
+      return null;
     }
+
+    const rect = container.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
   };
+
+  const handleSelectionMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || event.button !== 0) {
+      return;
+    }
+
+    const point = getRelativePoint(event);
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragStart(point);
+    setDragCurrent(point);
+  };
+
+  const handleSelectionMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || !dragStart) {
+      return;
+    }
+
+    const point = getRelativePoint(event);
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragCurrent(point);
+  };
+
+  const handleSelectionMouseUp = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || !dragStart || !dragCurrent || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const map = mapRef.current;
+    if (!map) {
+      setDragStart(null);
+      setDragCurrent(null);
+      return;
+    }
+
+    const minX = Math.min(dragStart.x, dragCurrent.x);
+    const maxX = Math.max(dragStart.x, dragCurrent.x);
+    const minY = Math.min(dragStart.y, dragCurrent.y);
+    const maxY = Math.max(dragStart.y, dragCurrent.y);
+
+    if (Math.abs(maxX - minX) < 6 || Math.abs(maxY - minY) < 6) {
+      setDragStart(null);
+      setDragCurrent(null);
+      return;
+    }
+
+    const northWest = map.unproject([minX, minY]);
+    const southEast = map.unproject([maxX, maxY]);
+
+    onBboxSelected?.({
+      minLon: Math.min(northWest.lng, southEast.lng),
+      minLat: Math.min(northWest.lat, southEast.lat),
+      maxLon: Math.max(northWest.lng, southEast.lng),
+      maxLat: Math.max(northWest.lat, southEast.lat),
+    });
+
+    setDragStart(null);
+    setDragCurrent(null);
+  };
+
+  const selectionRect = useMemo(() => {
+    if (!dragStart || !dragCurrent) {
+      return null;
+    }
+
+    const left = Math.min(dragStart.x, dragCurrent.x);
+    const top = Math.min(dragStart.y, dragCurrent.y);
+    const width = Math.abs(dragCurrent.x - dragStart.x);
+    const height = Math.abs(dragCurrent.y - dragStart.y);
+
+    return { left, top, width, height };
+  }, [dragStart, dragCurrent]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || typeof map.getCanvas !== 'function') {
+      return;
+    }
+
+    const canvas = map.getCanvas();
+    canvas.style.cursor = isSelectingBbox ? 'crosshair' : '';
+  }, [isSelectingBbox]);
 
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: '100%', position: 'relative' }}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        cursor: isSelectingBbox ? 'crosshair' : undefined,
+      }}
       onContextMenu={handleMapContextMenu}
-      onMouseUp={handleMapMouseUp}
+      onMouseDown={handleSelectionMouseDown}
+      onMouseMove={handleSelectionMouseMove}
+      onMouseUp={handleSelectionMouseUp}
     >
       {size.width > 0 && size.height > 0 && (
         <DeckGL
           viewState={viewState}
-          controller={true}
+          controller={{ dragPan: !isSelectingBbox, dragRotate: !isSelectingBbox }}
+          getCursor={({ isDragging }: { isDragging: boolean }) => {
+            if (isSelectingBbox) {
+              return 'crosshair';
+            }
+
+            return isDragging ? 'grabbing' : 'grab';
+          }}
           layers={layers}
           onViewStateChange={({ viewState: nextViewState }: { viewState: typeof viewState }) => {
             const normalizedViewState = nextViewState as typeof viewState;
@@ -201,6 +333,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         >
           <MapGL
             {...viewState}
+            onLoad={(event) => {
+              mapRef.current = event.target;
+            }}
             mapStyle={mapStyle}
             attributionControl={true}
             reuseMaps={true}
@@ -223,6 +358,43 @@ export const MapViewer: React.FC<MapViewerProps> = ({
             </div>
           </MapGL>
         </DeckGL>
+      )}
+
+      {selectionRect && (
+        <div
+          style={{
+            position: 'absolute',
+            left: selectionRect.left,
+            top: selectionRect.top,
+            width: selectionRect.width,
+            height: selectionRect.height,
+            border: '2px solid rgba(56, 189, 248, 0.95)',
+            background: 'rgba(56, 189, 248, 0.2)',
+            boxShadow: '0 0 0 1px rgba(2, 132, 199, 0.45) inset',
+            pointerEvents: 'none',
+            zIndex: 30,
+          }}
+        />
+      )}
+
+      {isSelectingBbox && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 10,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.9)',
+            color: '#f8fafc',
+            padding: '8px 12px',
+            borderRadius: '999px',
+            fontSize: '12px',
+            zIndex: 35,
+            border: '1px solid rgba(148, 163, 184, 0.35)',
+          }}
+        >
+          Cliquer-déplacer la souris sur la carte pour sélectionner une zone
+        </div>
       )}
 
       <div
