@@ -8,10 +8,12 @@ interface Vehicle {
   vitesse: number;
 }
 
-interface HttpResponse {
+interface ServerMessage {
   type: string;
   timestamp?: number;
   data?: Vehicle[];
+  simulationRunning?: boolean;
+  simulationPaused?: boolean;
   [key: string]: unknown;
 }
 
@@ -19,6 +21,8 @@ interface UseWebSocketReturn {
   vehicles: Vehicle[];
   isConnected: boolean;
   error: string | null;
+  simulationRunning: boolean;
+  simulationPaused: boolean;
   sendCommand: (command: string, value?: unknown) => void;
 }
 
@@ -26,10 +30,11 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [simulationRunning, setSimulationRunning] = useState(false);
+  const [simulationPaused, setSimulationPaused] = useState(false);
   const socketRef = useRef<WebSocket | null>(null);
   const socketUrl = url.replace('http://', 'ws://').replace('https://', 'wss://');
 
-  // S'abonner au flux WebSocket
   useEffect(() => {
     const socket = new WebSocket(socketUrl);
     socketRef.current = socket;
@@ -40,11 +45,17 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     };
 
     socket.onmessage = (event) => {
-      const data: HttpResponse = JSON.parse(event.data);
+      const msg: ServerMessage = JSON.parse(event.data);
 
-      if (data.type === 'update') {
-        if (Array.isArray(data.data)) {
-          setVehicles(data.data as Vehicle[]);
+      if (msg.type === 'update') {
+        if (Array.isArray(msg.data)) {
+          setVehicles(msg.data as Vehicle[]);
+        }
+        if (typeof msg.simulationRunning === 'boolean') {
+          setSimulationRunning(msg.simulationRunning);
+        }
+        if (typeof msg.simulationPaused === 'boolean') {
+          setSimulationPaused(msg.simulationPaused);
         }
       }
     };
@@ -64,18 +75,15 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     };
   }, [socketUrl]);
 
-  // Envoyer une commande au serveur
   const sendCommand = useCallback((command: string, value?: unknown) => {
-    const payload: Record<string, unknown> = value !== undefined ? { command, value } : { command };
-
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       setError('WebSocket non connecté');
       return;
     }
-
+    const payload: Record<string, unknown> =
+      value !== undefined ? { command, value } : { command };
     socketRef.current.send(JSON.stringify(payload));
-    console.log('Commande envoyée:', payload);
   }, []);
 
-  return { vehicles, isConnected, error, sendCommand };
+  return { vehicles, isConnected, error, simulationRunning, simulationPaused, sendCommand };
 };
