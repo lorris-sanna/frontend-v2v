@@ -39,6 +39,7 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [loadEventId, setLoadEventId] = useState(0);
   const socketRef = useRef<WebSocket | null>(null);
+  const ignoreUpdatesRef = useRef(false);
   const socketUrl = url.replace('http://', 'ws://').replace('https://', 'wss://');
 
   const latestVehiclesRef = useRef<Vehicle[] | null>(null);
@@ -62,6 +63,8 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
       const data: HttpResponse = JSON.parse(event.data);
 
       if (data.type === 'update') {
+        if (ignoreUpdatesRef.current) return;
+
         if (Array.isArray(data.data)) {
           latestVehiclesRef.current = data.data as Vehicle[];
           if (frameRef.current === null) {
@@ -81,15 +84,23 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
           setSpeed(data.speedFactor);
         }
       } else if (data.type === 'info') {
+        ignoreUpdatesRef.current = true;
+
         const message = typeof data.message === 'string' ? data.message : 'Chargement en cours...';
         setServerMessage(message);
         setLoadState('loading');
         setLoadEventId((prev) => prev + 1);
       } else if (data.type === 'loaded') {
+        ignoreUpdatesRef.current = false;
+        setVehicles([]);
+        latestVehiclesRef.current = null;
+
         setServerMessage(null);
         setLoadState('loaded');
         setLoadEventId((prev) => prev + 1);
       } else if (data.type === 'error') {
+        ignoreUpdatesRef.current = false;
+
         const message = typeof data.message === 'string' ? data.message : 'Erreur côté serveur.';
         setServerMessage(message);
         setLoadState('error');
@@ -127,6 +138,12 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       setError('WebSocket non connecté');
       return;
+    }
+
+    if (command === 'loadOsmContent' || command === 'loadOsmBbox') {
+      setVehicles([]);
+      latestVehiclesRef.current = null;
+      ignoreUpdatesRef.current = true;
     }
 
     socketRef.current.send(JSON.stringify(payload));

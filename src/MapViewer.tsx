@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import MapGL, { NavigationControl } from 'react-map-gl/maplibre';
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 interface Vehicle {
@@ -19,6 +19,20 @@ interface BBoxSelection {
   maxLat: number;
 }
 
+type IrisFeature = {
+  properties?: Record<string, unknown> | null;
+};
+
+type IrisGeoJson = {
+  type: 'FeatureCollection';
+  features: IrisFeature[];
+};
+
+type MapLike = {
+  getCanvas?: () => HTMLCanvasElement;
+  unproject: (point: [number, number]) => { lng: number; lat: number };
+};
+
 interface MapViewerProps {
   vehicles: Vehicle[];
   initialLongitude?: number;
@@ -26,7 +40,88 @@ interface MapViewerProps {
   initialZoom?: number;
   isSelectingBbox?: boolean;
   onBboxSelected?: (bbox: BBoxSelection) => void;
+  irisData?: IrisGeoJson | null;
+  communeMotorizationByCode?: Map<string, number> | null;
+  irisOpacity?: number;
 }
+
+const normalizeText = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const readString = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim();
+};
+
+const extractFeatureCode = (feature: IrisFeature) => {
+  const properties = feature.properties;
+  if (!properties) {
+    return '';
+  }
+
+  const preferredKeys = [
+    'CODE_IRIS',
+    'code_iris',
+    'CODEINSEE',
+    'code_insee',
+    'CODE_GEO',
+    'code_geo',
+    'CODGEO',
+    'codgeo',
+    'IRIS',
+    'iris',
+  ];
+
+  for (const key of preferredKeys) {
+    const rawValue = properties[key];
+    const code = readString(rawValue);
+
+    if (code) {
+      return code;
+    }
+  }
+
+  for (const [key, rawValue] of Object.entries(properties)) {
+    const normalizedKey = normalizeText(key);
+
+    if (normalizedKey.includes('iris') || normalizedKey.includes('code') || normalizedKey.includes('geo')) {
+      const code = readString(rawValue);
+      if (code) {
+        return code;
+      }
+    }
+  }
+
+  return '';
+};
+
+const formatPercentage = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) {
+    return 'indisponible';
+  }
+
+  return `${value.toFixed(1)} %`;
+};
+
+const colorFromRate = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) {
+    return [148, 163, 184, 80] as const;
+  }
+
+  const ratio = Math.max(0, Math.min(1, value / 100));
+  const red = Math.round(60 + ratio * 180);
+  const green = Math.round(180 - ratio * 120);
+  const blue = Math.round(90 - ratio * 60);
+
+  return [red, green, blue, 170] as const;
+};
 
 export const MapViewer: React.FC<MapViewerProps> = ({
   vehicles,
@@ -35,9 +130,12 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialZoom = 11,
   isSelectingBbox = false,
   onBboxSelected,
+  irisData,
+  communeMotorizationByCode,
+  irisOpacity = 0.7,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<any>(null);
+  const mapRef = useRef<MapLike | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
@@ -150,9 +248,41 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     [],
   );
 
+  const irisLayer = useMemo(() => {
+    if (!irisData || !communeMotorizationByCode) {
+      return null;
+    }
+
+    return new GeoJsonLayer({
+      id: 'iris-layer',
+      data: irisData,
+      pickable: true,
+      stroked: true,
+      filled: true,
+      opacity: irisOpacity,
+      getFillColor: (feature: IrisFeature) => {
+        const codeIris = extractFeatureCode(feature);
+
+        if (!codeIris) {
+          return colorFromRate(null);
+        }
+
+            const rate = communeMotorizationByCode.get(codeIris) ?? null;
+
+        return colorFromRate(rate);
+      },
+      getLineColor: [20, 24, 39, 180],
+      lineWidthMinPixels: 1,
+      updateTriggers: {
+        getFillColor: [communeMotorizationByCode],
+      },
+    });
+  }, [communeMotorizationByCode, irisData, irisOpacity]);
+
   const layers = useMemo(
     () => [
-      new ScatterplotLayer<Vehicle>({
+      ...(irisLayer ? [irisLayer] : []),
+      new ScatterplotLayer({
         id: 'vehicle-layer',
         data: vehicles,
         pickable: true,
@@ -180,7 +310,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         },
       }),
     ],
-    [vehicles],
+    [irisLayer, vehicles],
   );
 
   const handleMapContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -320,6 +450,27 @@ export const MapViewer: React.FC<MapViewerProps> = ({
             return isDragging ? 'grabbing' : 'grab';
           }}
           layers={layers}
+          getTooltip={({ object }: { object?: IrisFeature | null }) => {
+            if (!object || !communeMotorizationByCode) {
+              return null;
+            }
+
+            const feature = object as IrisFeature;
+            const codeIris = extractFeatureCode(feature);
+
+            if (!codeIris) {
+              return null;
+            }
+
+            const rate = communeMotorizationByCode.get(codeIris) ?? null;
+
+            return {
+              html: `
+                <div style="font-weight:700;margin-bottom:4px;">IRIS ${codeIris}</div>
+                <div>Taux de motorisation: ${formatPercentage(rate)}</div>
+              `,
+            };
+          }}
           onViewStateChange={({ viewState: nextViewState }: { viewState: typeof viewState }) => {
             const normalizedViewState = nextViewState as typeof viewState;
 
