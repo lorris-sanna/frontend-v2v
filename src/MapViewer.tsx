@@ -631,67 +631,69 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       onMouseMove={handleSelectionMouseMove}
       onMouseUp={handleSelectionMouseUp}
     >
-      <DeckGL
-        viewState={viewState}
-        controller={{ dragPan: !isSelectingBbox, dragRotate: !isSelectingBbox }}
-        layers={layers}
-        onViewStateChange={(e: any) => setViewState(e.viewState)}
-        onClick={onDeckClick}
-        style={{ width: '100%', height: '100%' }}
-        getCursor={({ isDragging, isHovering }: any) =>
-          isSelectingBbox
-            ? 'crosshair'
-            : isDragging
-              ? 'grabbing'
-              : isHovering
-                ? 'pointer'
-                : 'crosshair'
-        }
-        getTooltip={({ object, layer }: { object?: IrisFeature | null; layer?: { id?: string } | null }) => {
-          if (!object || !communeMotorizationByCode || layer?.id !== 'iris-layer') {
-            return null;
-          }
-
-          const codeIris = extractFeatureCode(object as IrisFeature);
-
-          if (!codeIris) {
-            return null;
-          }
-
-          const rate = communeMotorizationByCode.get(codeIris) ?? null;
-
-          if (rate === null || Number.isNaN(rate)) {
-            return {
-              html: `<div style="font-style: italic; opacity: 0.8;">Données indisponibles pour cette zone</div>`
-            };
-          }
-
-          return {
-            html: `
-              <div style="font-weight:700; font-size:1.15em; margin-bottom:2px; color:#38bdf8;">
-                ${formatPercentage(rate)}
-              </div>
-              <div style="font-size:0.9em; opacity:0.9;">
-                des foyers possèdent au moins une voiture
-              </div>
-            `,
-          };
+      <MapGL
+        {...viewState}
+        onMove={(e: any) => setViewState(e.viewState)}
+        onLoad={(event) => {
+          mapRef.current = event.target;
+          window.requestAnimationFrame(() => {
+            mapRef.current?.resize?.();
+          });
         }}
+        mapStyle="https://tiles.openfreemap.org/styles/liberty"
+        attributionControl={false}
+        style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
       >
-        <MapGL
-          {...viewState}
-          onLoad={(event) => {
-            mapRef.current = event.target;
-            window.requestAnimationFrame(() => {
-              mapRef.current?.resize?.();
-            });
+        <NavigationControl position="top-left" />
+
+        <DeckGL
+          viewState={viewState}
+          controller={{ dragPan: !isSelectingBbox, dragRotate: !isSelectingBbox }}
+          layers={layers}
+          onViewStateChange={(e: any) => setViewState(e.viewState)}
+          onClick={onDeckClick}
+          style={{ width: '100%', height: '100%' }}
+          getCursor={({ isDragging, isHovering }: any) =>
+            isSelectingBbox
+              ? 'crosshair'
+              : isDragging
+                ? 'grabbing'
+                : isHovering
+                  ? 'pointer'
+                  : 'crosshair'
+          }
+          getTooltip={({ object, layer }: { object?: IrisFeature | null; layer?: { id?: string } | null }) => {
+            if (!object || !communeMotorizationByCode || layer?.id !== 'iris-layer') {
+              return null;
+            }
+
+            const codeIris = extractFeatureCode(object as IrisFeature);
+
+            if (!codeIris) {
+              return null;
+            }
+
+            const rate = communeMotorizationByCode.get(codeIris) ?? null;
+
+            if (rate === null || Number.isNaN(rate)) {
+              return {
+                html: `<div style="font-style: italic; opacity: 0.8;">Données indisponibles pour cette zone</div>`
+              };
+            }
+
+            return {
+              html: `
+                <div style="font-weight:700; font-size:1.15em; margin-bottom:2px; color:#38bdf8;">
+                  ${formatPercentage(rate)}
+                </div>
+                <div style="font-size:0.9em; opacity:0.9;">
+                  des foyers possèdent au moins une voiture
+                </div>
+              `,
+            };
           }}
-          mapStyle="https://tiles.openfreemap.org/styles/liberty"
-          attributionControl={false}
-        >
-          <NavigationControl position="top-left" />
-        </MapGL>
-      </DeckGL>
+        />
+      </MapGL>
 
       <div className="map-panel stats-panel">
         <div className="stat-row">

@@ -536,8 +536,6 @@ function App() {
   }, [sendCommand])
 
   const handleZoneLoad = useCallback(() => {
-    setIrisData(null)
-    setIrisMetricsByCode(null)
     setIsSelectingZone(prev => !prev)
   }, [])
 
@@ -724,8 +722,14 @@ function App() {
             initialLongitude={7.5}
             initialLatitude={48.3}
             initialZoom={11}
-            onAddVehicle={(lon, lat) => sendCommand('addVehicle', { lon, lat })}
-            onRemoveVehicle={(id) => sendCommand('removeVehicle', id)}
+            onAddVehicle={(lon, lat) => {
+              sendCommand('addVehicle', { lon, lat })
+              setVehicleCount(prev => prev + 1)
+            }}
+            onRemoveVehicle={(id) => {
+              sendCommand('removeVehicle', id)
+              setVehicleCount(prev => Math.max(0, prev - 1))
+            }}
             isSelectingBbox={isSelectingZone}
             onBboxSelected={handleBboxSelected}
           />
