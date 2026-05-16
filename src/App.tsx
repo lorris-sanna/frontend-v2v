@@ -3,11 +3,19 @@ import './App.css'
 import { MapViewer } from './MapViewer'
 import { useWebSocket } from './useWebSocket'
 
-const SPEED_PRESETS = [0.25, 0.5, 1, 2, 5] as const
+const SPEED_MIN = 0.25
+const SPEED_MAX = 5
+const SPEED_STEP = 0.25
+const SPEED_DEFAULT = 1
+
 const VEHICLE_MIN = 100
 const VEHICLE_MAX = 10000
 const VEHICLE_STEP = 100
 const VEHICLE_DEFAULT = 10000
+
+function formatSpeed(s: number): string {
+  return `${parseFloat(s.toFixed(2))}×`
+}
 
 function formatVehicleCount(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k` : `${n}`
@@ -18,14 +26,15 @@ function App() {
   const { vehicles, isConnected, error, simulationRunning, simulationPaused, sendCommand } =
     useWebSocket(serverUrl)
 
-  const [speed, setSpeed] = useState<number>(1)
+  const [speed, setSpeed] = useState<number>(SPEED_DEFAULT)
   const [vehicleCount, setVehicleCount] = useState<number>(VEHICLE_DEFAULT)
 
   const handlePauseResume = useCallback(() => {
     sendCommand('pause')
   }, [sendCommand])
 
-  const handleSpeed = useCallback((s: number) => {
+  const handleSpeedSlider = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const s = parseFloat(e.target.value)
     setSpeed(s)
     sendCommand('speed', s)
   }, [sendCommand])
@@ -66,17 +75,17 @@ function App() {
               {/* Vitesse */}
               <div className="ctrl-speed-group">
                 <span className="ctrl-speed-label">Vitesse</span>
-                <div className="ctrl-speed-btns">
-                  {SPEED_PRESETS.map(s => (
-                    <button
-                      key={s}
-                      className={`ctrl-speed-btn${speed === s ? ' active' : ''}`}
-                      onClick={() => handleSpeed(s)}
-                    >
-                      {s}×
-                    </button>
-                  ))}
-                </div>
+                <span className="ctrl-vehicles-count">{formatSpeed(speed)}</span>
+                <input
+                  type="range"
+                  className="ctrl-vehicles-slider"
+                  min={SPEED_MIN}
+                  max={SPEED_MAX}
+                  step={SPEED_STEP}
+                  value={speed}
+                  style={{ '--pct': `${((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100).toFixed(1)}` } as React.CSSProperties}
+                  onChange={handleSpeedSlider}
+                />
               </div>
 
               {/* Séparateur */}
@@ -120,6 +129,8 @@ function App() {
             initialLongitude={7.5}
             initialLatitude={48.3}
             initialZoom={11}
+            onAddVehicle={(lon, lat) => sendCommand('addVehicle', { lon, lat })}
+            onRemoveVehicle={(id) => sendCommand('removeVehicle', id)}
           />
         ) : (
           <div className="loading">

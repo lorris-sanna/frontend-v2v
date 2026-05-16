@@ -20,6 +20,8 @@ interface MapViewerProps {
   initialLongitude?: number;
   initialLatitude?: number;
   initialZoom?: number;
+  onAddVehicle?: (lon: number, lat: number) => void;
+  onRemoveVehicle?: (id: number) => void;
 }
 
 // Taille de l'atlas (px) — la même pour l'image réelle et le fallback
@@ -128,6 +130,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialLongitude = 7.5,
   initialLatitude = 48.3,
   initialZoom = 14,
+  onAddVehicle,
+  onRemoveVehicle,
 }) => {
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
@@ -214,12 +218,15 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     [vehicles, selectedId]
   );
 
-  const onVehicleClick = useCallback((info: any) => {
-    if (!info.object) return;
-    const id = (info.object as Vehicle).id;
-    if (id === selectedId) { setSelectedId(null); traceRef.current = []; }
-    else { setSelectedId(id); traceRef.current = [[info.object.x, info.object.y]]; }
-  }, [selectedId]);
+  const onDeckClick = useCallback((info: any) => {
+    if (info.picked && info.layer?.id === 'vehicles' && info.object) {
+      const id = (info.object as Vehicle).id;
+      if (id === selectedId) { setSelectedId(null); traceRef.current = []; }
+      else { setSelectedId(id); traceRef.current = [[info.object.x, info.object.y]]; }
+    } else if (!info.picked && info.coordinate) {
+      onAddVehicle?.(info.coordinate[0], info.coordinate[1]);
+    }
+  }, [selectedId, onAddVehicle]);
 
   const closePanel = useCallback(() => { setSelectedId(null); traceRef.current = []; }, []);
 
@@ -232,7 +239,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   }, []);
 
   const layers = useMemo(() => {
-    void atlasReady; // dépendance pour forcer le recalcul au chargement de l'image
+    void atlasReady;
     const result: any[] = [];
 
     if (selectedId !== null && traceRef.current.length >= 2) {
@@ -260,12 +267,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         getPosition: (d: Vehicle) => [d.x, d.y],
         getSize: (d: Vehicle) => (d.id === selectedId ? 42 : 28),
         getAngle: (d: Vehicle) => -(anglesRef.current.get(d.id) ?? 0) + CAR_ANGLE_OFFSET,
-        // mask: false → blanc = couleurs réelles de l'image ; autre couleur = tint multiplicatif
         getColor: (d: Vehicle) =>
           d.id === selectedId
             ? ([255, 230, 60, 255] as [number, number, number, number])
             : ([255, 255, 255, 220] as [number, number, number, number]),
-        onClick: onVehicleClick,
         updateTriggers: {
           getColor: [selectedId],
           getAngle: vehicles.length,
@@ -276,7 +281,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
 
     return result;
-  }, [vehicles, selectedId, traceOpacity, onVehicleClick, atlasReady]);
+  }, [vehicles, selectedId, traceOpacity, atlasReady]);
 
   const avgSpeed = useMemo(
     () => vehicles.length > 0
@@ -296,9 +301,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         controller={true}
         layers={layers}
         onViewStateChange={(e: any) => setViewState(e.viewState)}
+        onClick={onDeckClick}
         style={{ width: '100%', height: '100%' }}
         getCursor={({ isDragging, isHovering }: any) =>
-          isDragging ? 'grabbing' : isHovering ? 'pointer' : 'grab'
+          isDragging ? 'grabbing' : isHovering ? 'pointer' : 'crosshair'
         }
       >
         <MapGL
@@ -384,11 +390,17 @@ export const MapViewer: React.FC<MapViewerProps> = ({
               />
             </div>
           </div>
+          <button
+            className="btn-remove-vehicle"
+            onClick={() => { onRemoveVehicle?.(selectedVehicle.id); closePanel(); }}
+          >
+            Supprimer ce véhicule
+          </button>
         </div>
       )}
 
       {!selectedVehicle && vehicles.length > 0 && (
-        <div className="click-hint">Cliquez sur un véhicule pour voir son tracé</div>
+        <div className="click-hint">Clic sur un véhicule pour le sélectionner · Clic sur la carte pour en ajouter un</div>
       )}
 
       <div className="map-attribution">
