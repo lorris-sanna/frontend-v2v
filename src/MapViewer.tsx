@@ -672,7 +672,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
                 ${formatPercentage(rate)}
               </div>
               <div style="font-size:0.9em; opacity:0.9;">
-                des foyers possèdent une voiture
+                des foyers possèdent au moins une voiture
               </div>
             `,
           };
