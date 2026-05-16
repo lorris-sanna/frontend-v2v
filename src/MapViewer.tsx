@@ -683,10 +683,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
             return {
               html: `
-                <div style="font-weight:700; font-size:1.15em; margin-bottom:2px; color:#38bdf8;">
+                <div style="font-weight:700; font-size:2.0em; margin-bottom:2px; color:#38bdf8;">
                   ${formatPercentage(rate)}
                 </div>
-                <div style="font-size:0.9em; opacity:0.9;">
+                <div style="font-size:1.3em; opacity:0.9;">
                   des foyers possèdent au moins une voiture
                 </div>
               `,
