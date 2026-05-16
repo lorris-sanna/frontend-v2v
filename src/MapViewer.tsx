@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import MapGL, { NavigationControl } from 'react-map-gl/maplibre';
 import DeckGL from '@deck.gl/react';
-import { IconLayer, PathLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, IconLayer, PathLayer } from '@deck.gl/layers';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import carImageUrl from './assets/car.jpg';
 
@@ -15,6 +15,28 @@ interface Vehicle {
 
 type Pos2 = [number, number];
 
+type BBoxSelection = {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+}
+
+type IrisFeature = {
+  properties?: Record<string, unknown> | null;
+}
+
+type IrisGeoJson = {
+  type: 'FeatureCollection';
+  features: IrisFeature[];
+}
+
+type MapLike = {
+  getCanvas?: () => HTMLCanvasElement;
+  unproject: (point: [number, number]) => { lng: number; lat: number };
+  resize?: () => void;
+}
+
 interface MapViewerProps {
   vehicles: Vehicle[];
   initialLongitude?: number;
@@ -22,6 +44,11 @@ interface MapViewerProps {
   initialZoom?: number;
   onAddVehicle?: (lon: number, lat: number) => void;
   onRemoveVehicle?: (id: number) => void;
+  isSelectingBbox?: boolean;
+  onBboxSelected?: (bbox: BBoxSelection) => void;
+  irisData?: IrisGeoJson | null;
+  communeMotorizationByCode?: Map<string, number> | null;
+  irisOpacity?: number;
 }
 
 // Taille de l'atlas (px) — la même pour l'image réelle et le fallback
@@ -35,6 +62,98 @@ const ICON_MAPPING = {
 const CAR_ANGLE_OFFSET = 90;
 
 const MAX_TRACE = 300;
+
+const normalizeText = (value: unknown) =>
+  String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+const readString = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return '';
+  }
+
+  return String(value).trim();
+};
+
+const extractFeatureCode = (feature: IrisFeature) => {
+  const properties = feature.properties;
+
+  if (!properties) {
+    return '';
+  }
+
+  const preferredKeys = [
+    'CODE_IRIS',
+    'code_iris',
+    'CODEINSEE',
+    'code_insee',
+    'CODE_GEO',
+    'code_geo',
+    'CODGEO',
+    'codgeo',
+    'IRIS',
+    'iris',
+  ];
+
+  for (const key of preferredKeys) {
+    const rawValue = properties[key];
+    const code = readString(rawValue);
+
+    if (code) {
+      return code;
+    }
+  }
+
+  for (const [key, rawValue] of Object.entries(properties)) {
+    const normalizedKey = normalizeText(key);
+
+    if (normalizedKey.includes('iris') || normalizedKey.includes('code') || normalizedKey.includes('geo')) {
+      const code = readString(rawValue);
+
+      if (code) {
+        return code;
+      }
+    }
+  }
+
+  return '';
+};
+
+const formatPercentage = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) {
+    return 'indisponible';
+  }
+
+  return `${value.toFixed(1)} %`;
+};
+
+const colorFromRate = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) {
+    return [148, 163, 184, 80] as const; // Gris transparent
+  }
+
+  const alpha = 170;
+
+  // Échelle de densité : du plus clair (peu) au plus foncé (beaucoup)
+  if (value < 55) {
+    return [255, 255, 178, alpha] as const; // Jaune pâle : très peu de voitures
+  }
+  if (value < 65) {
+    return [254, 204, 92, alpha] as const;  // Jaune-Orange : peu de voitures
+  }
+  if (value < 75) {
+    return [253, 141, 60, alpha] as const;  // Orange : moyenne
+  }
+  if (value < 85) {
+    return [240, 59, 32, alpha] as const;   // Rouge : beaucoup de voitures
+  }
+  
+  // value >= 85
+  return [189, 0, 38, alpha] as const;      // Rouge foncé : énorme densité de voitures
+};
 
 function bearing(lon1: number, lat1: number, lon2: number, lat2: number): number {
   const dLon = lon2 - lon1;
@@ -132,7 +251,14 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialZoom = 14,
   onAddVehicle,
   onRemoveVehicle,
+  isSelectingBbox = false,
+  onBboxSelected,
+  irisData,
+  communeMotorizationByCode,
+  irisOpacity = 0.7,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLike | null>(null);
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
     latitude: initialLatitude,
@@ -141,10 +267,12 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     bearing: 0,
   });
 
-  const [hasCentered, setHasCentered] = useState(false);
+  const hasCenteredRef = useRef(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [traceOpacity, setTraceOpacity] = useState(0.82);
   const [is3D, setIs3D] = useState(true);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
 
   const atlasRef = useRef<HTMLCanvasElement | null>(null);
   const [atlasReady, setAtlasReady] = useState(false);
@@ -162,7 +290,55 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   }, []);
 
   useEffect(() => {
-    if (hasCentered || vehicles.length === 0) return;
+    if (!isSelectingBbox) {
+      setDragStart(null);
+      setDragCurrent(null);
+    }
+  }, [isSelectingBbox]);
+
+  useEffect(() => {
+    if (vehicles.length !== 0) {
+      return;
+    }
+
+    hasCenteredRef.current = false;
+
+    if (selectedId !== null) {
+      setSelectedId(null);
+    }
+
+    traceRef.current = [];
+    prevPosRef.current.clear();
+    anglesRef.current.clear();
+    angleVecRef.current.clear();
+  }, [vehicles.length, selectedId]);
+
+  useEffect(() => {
+    const syncMapSize = () => {
+      mapRef.current?.resize?.();
+    };
+
+    const frameId = window.requestAnimationFrame(syncMapSize);
+    window.addEventListener('resize', syncMapSize);
+
+    const observer =
+      typeof ResizeObserver !== 'undefined' && containerRef.current
+        ? new ResizeObserver(() => syncMapSize())
+        : null;
+
+    if (observer && containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      window.removeEventListener('resize', syncMapSize);
+      observer?.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasCenteredRef.current || vehicles.length === 0) return;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const v of vehicles) {
       if (v.x < minX) minX = v.x;
@@ -171,8 +347,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       if (v.y > maxY) maxY = v.y;
     }
     setViewState(s => ({ ...s, longitude: (minX + maxX) / 2, latitude: (minY + maxY) / 2 }));
-    setHasCentered(true);
-  }, [vehicles, hasCentered]);
+    hasCenteredRef.current = true;
+  }, [vehicles]);
 
   useEffect(() => {
     const ALPHA = 0.3;      // lissage : 0 = figé, 1 = instantané
@@ -218,15 +394,151 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     [vehicles, selectedId]
   );
 
+  const irisLayer = useMemo(() => {
+    if (!irisData || !communeMotorizationByCode) {
+      return null;
+    }
+
+    return new GeoJsonLayer({
+      id: 'iris-layer',
+      data: irisData,
+      pickable: true,
+      stroked: true,
+      filled: true,
+      opacity: irisOpacity,
+      getFillColor: (feature: IrisFeature) => {
+        const codeIris = extractFeatureCode(feature);
+
+        if (!codeIris) {
+          return colorFromRate(null);
+        }
+
+        const rate = communeMotorizationByCode.get(codeIris) ?? null;
+        return colorFromRate(rate);
+      },
+      getLineColor: [20, 24, 39, 180],
+      lineWidthMinPixels: 1,
+      updateTriggers: {
+        getFillColor: [communeMotorizationByCode],
+      },
+    });
+  }, [communeMotorizationByCode, irisData, irisOpacity]);
+
+  const getRelativePoint = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const container = containerRef.current;
+
+    if (!container) {
+      return null;
+    }
+
+    const rect = container.getBoundingClientRect();
+
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  }, []);
+
+  const handleSelectionMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || event.button !== 0) {
+      return;
+    }
+
+    const point = getRelativePoint(event);
+
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragStart(point);
+    setDragCurrent(point);
+  }, [getRelativePoint, isSelectingBbox]);
+
+  const handleSelectionMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || !dragStart) {
+      return;
+    }
+
+    const point = getRelativePoint(event);
+
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setDragCurrent(point);
+  }, [dragStart, getRelativePoint, isSelectingBbox]);
+
+  const handleSelectionMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isSelectingBbox || !dragStart || !dragCurrent || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const map = mapRef.current;
+
+    if (!map) {
+      setDragStart(null);
+      setDragCurrent(null);
+      return;
+    }
+
+    const minX = Math.min(dragStart.x, dragCurrent.x);
+    const maxX = Math.max(dragStart.x, dragCurrent.x);
+    const minY = Math.min(dragStart.y, dragCurrent.y);
+    const maxY = Math.max(dragStart.y, dragCurrent.y);
+
+    if (Math.abs(maxX - minX) < 6 || Math.abs(maxY - minY) < 6) {
+      setDragStart(null);
+      setDragCurrent(null);
+      return;
+    }
+
+    const northWest = map.unproject([minX, minY]);
+    const southEast = map.unproject([maxX, maxY]);
+
+    onBboxSelected?.({
+      minLon: Math.min(northWest.lng, southEast.lng),
+      minLat: Math.min(northWest.lat, southEast.lat),
+      maxLon: Math.max(northWest.lng, southEast.lng),
+      maxLat: Math.max(northWest.lat, southEast.lat),
+    });
+
+    setDragStart(null);
+    setDragCurrent(null);
+  }, [dragCurrent, dragStart, isSelectingBbox, onBboxSelected]);
+
+  const selectionRect = useMemo(() => {
+    if (!dragStart || !dragCurrent) {
+      return null;
+    }
+
+    const left = Math.min(dragStart.x, dragCurrent.x);
+    const top = Math.min(dragStart.y, dragCurrent.y);
+    const width = Math.abs(dragCurrent.x - dragStart.x);
+    const height = Math.abs(dragCurrent.y - dragStart.y);
+
+    return { left, top, width, height };
+  }, [dragCurrent, dragStart]);
+
   const onDeckClick = useCallback((info: any) => {
+    if (isSelectingBbox) {
+      return;
+    }
+
     if (info.picked && info.layer?.id === 'vehicles' && info.object) {
       const id = (info.object as Vehicle).id;
       if (id === selectedId) { setSelectedId(null); traceRef.current = []; }
       else { setSelectedId(id); traceRef.current = [[info.object.x, info.object.y]]; }
-    } else if (!info.picked && info.coordinate) {
+    } else if (info.coordinate) {
       onAddVehicle?.(info.coordinate[0], info.coordinate[1]);
     }
-  }, [selectedId, onAddVehicle]);
+  }, [isSelectingBbox, onAddVehicle, selectedId]);
 
   const closePanel = useCallback(() => { setSelectedId(null); traceRef.current = []; }, []);
 
@@ -241,6 +553,10 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const layers = useMemo(() => {
     void atlasReady;
     const result: any[] = [];
+
+    if (irisLayer) {
+      result.push(irisLayer);
+    }
 
     if (selectedId !== null && traceRef.current.length >= 2) {
       result.push(new PathLayer({
@@ -264,13 +580,20 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         iconAtlas: atlasRef.current,
         iconMapping: ICON_MAPPING,
         getIcon: () => 'car',
-        getPosition: (d: Vehicle) => [d.x, d.y],
+        
+        getPosition: (d: Vehicle) => [d.x, d.y, 5], 
+        
         getSize: (d: Vehicle) => (d.id === selectedId ? 42 : 28),
         getAngle: (d: Vehicle) => -(anglesRef.current.get(d.id) ?? 0) + CAR_ANGLE_OFFSET,
         getColor: (d: Vehicle) =>
           d.id === selectedId
             ? ([255, 230, 60, 255] as [number, number, number, number])
             : ([255, 255, 255, 220] as [number, number, number, number]),
+            
+        parameters: {
+          depthTest: false
+        },
+
         updateTriggers: {
           getColor: [selectedId],
           getAngle: vehicles.length,
@@ -281,7 +604,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
 
     return result;
-  }, [vehicles, selectedId, traceOpacity, atlasReady]);
+  }, [atlasReady, irisLayer, selectedId, traceOpacity, vehicles]);
 
   const avgSpeed = useMemo(
     () => vehicles.length > 0
@@ -295,21 +618,74 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     : ([255, 255, 255, 255] as [number, number, number, number]);
 
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }} onContextMenu={e => e.preventDefault()}>
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        cursor: isSelectingBbox ? 'crosshair' : undefined,
+      }}
+      onContextMenu={e => e.preventDefault()}
+      onMouseDown={handleSelectionMouseDown}
+      onMouseMove={handleSelectionMouseMove}
+      onMouseUp={handleSelectionMouseUp}
+    >
       <DeckGL
         viewState={viewState}
-        controller={true}
+        controller={{ dragPan: !isSelectingBbox, dragRotate: !isSelectingBbox }}
         layers={layers}
         onViewStateChange={(e: any) => setViewState(e.viewState)}
         onClick={onDeckClick}
         style={{ width: '100%', height: '100%' }}
         getCursor={({ isDragging, isHovering }: any) =>
-          isDragging ? 'grabbing' : isHovering ? 'pointer' : 'crosshair'
+          isSelectingBbox
+            ? 'crosshair'
+            : isDragging
+              ? 'grabbing'
+              : isHovering
+                ? 'pointer'
+                : 'crosshair'
         }
+        getTooltip={({ object, layer }: { object?: IrisFeature | null; layer?: { id?: string } | null }) => {
+          if (!object || !communeMotorizationByCode || layer?.id !== 'iris-layer') {
+            return null;
+          }
+
+          const codeIris = extractFeatureCode(object as IrisFeature);
+
+          if (!codeIris) {
+            return null;
+          }
+
+          const rate = communeMotorizationByCode.get(codeIris) ?? null;
+
+          if (rate === null || Number.isNaN(rate)) {
+            return {
+              html: `<div style="font-style: italic; opacity: 0.8;">Données indisponibles pour cette zone</div>`
+            };
+          }
+
+          return {
+            html: `
+              <div style="font-weight:700; font-size:1.15em; margin-bottom:2px; color:#38bdf8;">
+                ${formatPercentage(rate)}
+              </div>
+              <div style="font-size:0.9em; opacity:0.9;">
+                des foyers possèdent une voiture
+              </div>
+            `,
+          };
+        }}
       >
         <MapGL
           {...viewState}
-          onMove={evt => setViewState(evt.viewState)}
+          onLoad={(event) => {
+            mapRef.current = event.target;
+            window.requestAnimationFrame(() => {
+              mapRef.current?.resize?.();
+            });
+          }}
           mapStyle="https://tiles.openfreemap.org/styles/liberty"
           attributionControl={false}
         >
@@ -396,6 +772,43 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           >
             Supprimer ce véhicule
           </button>
+        </div>
+      )}
+
+      {selectionRect && (
+        <div
+          style={{
+            position: 'absolute',
+            left: selectionRect.left,
+            top: selectionRect.top,
+            width: selectionRect.width,
+            height: selectionRect.height,
+            border: '2px solid rgba(56, 189, 248, 0.95)',
+            background: 'rgba(56, 189, 248, 0.2)',
+            boxShadow: '0 0 0 1px rgba(2, 132, 199, 0.45) inset',
+            pointerEvents: 'none',
+            zIndex: 30,
+          }}
+        />
+      )}
+
+      {isSelectingBbox && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 10,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.9)',
+            color: '#f8fafc',
+            padding: '8px 12px',
+            borderRadius: '999px',
+            fontSize: '12px',
+            zIndex: 35,
+            border: '1px solid rgba(148, 163, 184, 0.35)',
+          }}
+        >
+          Cliquer-dragger sur la carte pour sélectionner une zone
         </div>
       )}
 
