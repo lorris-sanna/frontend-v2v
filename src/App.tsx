@@ -316,7 +316,7 @@ const filterIrisByVehiclesBbox = (allIrisData: IrisGeoJson, vehiclesList: Array<
 
 function App() {
   const serverUrl = 'ws://localhost:8080'
-  const { vehicles, isConnected, error, isPlaying, speed, serverMessage, loadState, loadEventId, sendCommand } = useWebSocket(serverUrl)
+  const { vehicles, isConnected, error, serverMessage, loadState, loadEventId, sendCommand } = useWebSocket(serverUrl)
   const [isSelectingZone, setIsSelectingZone] = useState(false)
   const [irisData, setIrisData] = useState<IrisGeoJson | null>(null)
   const [irisMetricsByCode, setIrisMetricsByCode] = useState<Map<string, number> | null>(null)
@@ -472,19 +472,6 @@ function App() {
     })
   }
 
-  const handlePlay = () => {
-    sendCommand('play')
-  }
-
-  const handlePause = () => {
-    sendCommand('pause')
-  }
-
-  const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newSpeed = parseFloat(e.target.value)
-    sendCommand('setSpeed', newSpeed)
-  }
-
   const handleIrisToggle = () => {
     setShowIris(prev => !prev)
   }
@@ -532,30 +519,6 @@ function App() {
 
         {isConnected && isGraphLoaded && !isLoadingGraph && (
           <div className="controls">
-            <div className="button-group">
-              <button
-                className={`btn ${isPlaying ? 'btn-pause' : 'btn-play'}`}
-                onClick={isPlaying ? handlePause : handlePlay}
-              >
-                {isPlaying ? '⏸ Pause' : '▶ Play'}
-              </button>
-            </div>
-
-            <div className="speed-control">
-              <label htmlFor="speed-slider">Vitesse:</label>
-              <input
-                id="speed-slider"
-                type="range"
-                min="0.1"
-                max="5"
-                step="0.1"
-                value={speed}
-                onChange={handleSpeedChange}
-                className="speed-slider"
-              />
-              <span className="speed-value">{speed.toFixed(1)}x</span>
-            </div>
-
             <div className="iris-controls">
               <label htmlFor="iris-toggle" className="iris-checkbox-label">
                 <input

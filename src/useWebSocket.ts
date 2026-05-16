@@ -12,8 +12,6 @@ interface HttpResponse {
   type: string;
   timestamp?: number;
   data?: Vehicle[];
-  isRunning?: boolean;
-  speedFactor?: number;
   [key: string]: unknown;
 }
 
@@ -21,8 +19,6 @@ interface UseWebSocketReturn {
   vehicles: Vehicle[];
   isConnected: boolean;
   error: string | null;
-  isPlaying: boolean;
-  speed: number;
   serverMessage: string | null;
   loadState: 'idle' | 'loading' | 'loaded' | 'error';
   loadEventId: number;
@@ -33,8 +29,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
   const [serverMessage, setServerMessage] = useState<string | null>(null);
   const [loadState, setLoadState] = useState<'idle' | 'loading' | 'loaded' | 'error'>('idle');
   const [loadEventId, setLoadEventId] = useState(0);
@@ -75,13 +69,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
               frameRef.current = null;
             });
           }
-        }
-      } else if (data.type === 'status') {
-        if (data.isRunning !== undefined) {
-          setIsPlaying(data.isRunning);
-        }
-        if (data.speedFactor !== undefined) {
-          setSpeed(data.speedFactor);
         }
       } else if (data.type === 'info') {
         ignoreUpdatesRef.current = true;
@@ -150,5 +137,5 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     console.log('Commande envoyée:', payload);
   }, []);
 
-  return { vehicles, isConnected, error, isPlaying, speed, serverMessage, loadState, loadEventId, sendCommand };
+  return { vehicles, isConnected, error, serverMessage, loadState, loadEventId, sendCommand };
 };
