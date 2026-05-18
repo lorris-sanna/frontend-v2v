@@ -803,7 +803,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
             border: '1px solid rgba(148, 163, 184, 0.35)',
           }}
         >
-          Cliquer-dragger sur la carte pour sélectionner une zone
+          Cliquer-déplacer sur la carte pour sélectionner une zone
         </div>
       )}
 
