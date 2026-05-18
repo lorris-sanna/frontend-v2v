@@ -42,6 +42,7 @@ interface MapViewerProps {
   initialLongitude?: number;
   initialLatitude?: number;
   initialZoom?: number;
+  sidebarVisibleWidth?: number;
   onAddVehicle?: (lon: number, lat: number) => void;
   onRemoveVehicle?: (id: number) => void;
   isSelectingBbox?: boolean;
@@ -244,6 +245,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   initialLongitude = 7.5,
   initialLatitude = 48.3,
   initialZoom = 14,
+  sidebarVisibleWidth = 0,
   onAddVehicle,
   onRemoveVehicle,
   isSelectingBbox = false,
@@ -252,6 +254,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   communeMotorizationByCode,
   irisOpacity = 0.7,
 }) => {
+  const hintsCenterLeft = `calc(50% + ${Math.max(0, sidebarVisibleWidth) / 2}px)`;
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLike | null>(null);
   const [viewState, setViewState] = useState({
@@ -820,8 +824,9 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           style={{
             position: 'absolute',
             top: 10,
-            left: '50%',
+            left: hintsCenterLeft,
             transform: 'translateX(-50%)',
+            transition: 'left 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
             background: 'rgba(15, 23, 42, 0.9)',
             color: '#f8fafc',
             padding: '8px 12px',
@@ -836,7 +841,16 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       )}
 
       {!selectedVehicle && vehicles.length > 0 && (
-        <div className="click-hint">Clic sur un véhicule pour le sélectionner · Clic sur la carte pour en ajouter un</div>
+        <div
+          className="click-hint"
+          style={{
+            left: hintsCenterLeft,
+            transform: 'translateX(-50%)',
+            transition: 'left 0.35s cubic-bezier(0.4, 0, 0.2, 1)',
+          }}
+        >
+          Clic sur un véhicule pour le sélectionner · Clic sur la carte pour en ajouter un
+        </div>
       )}
 
       <div className="map-attribution">

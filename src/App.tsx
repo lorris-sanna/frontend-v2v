@@ -14,6 +14,7 @@ const VEHICLE_MIN = 100
 const VEHICLE_MAX = 10000
 const VEHICLE_STEP = 100
 const VEHICLE_DEFAULT = 10000
+const SIDE_MENU_WIDTH = 350
 
 type IrisGeoJson = {
   type: 'FeatureCollection'
@@ -791,6 +792,7 @@ function App() {
               irisData={showIris ? irisData : null}
               communeMotorizationByCode={irisMetricsByCode}
               irisOpacity={irisOpacity}
+              sidebarVisibleWidth={sideMenuOpen ? SIDE_MENU_WIDTH : 0}
               initialLongitude={7.5}
               initialLatitude={48.3}
               initialZoom={11}
