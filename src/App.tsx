@@ -352,12 +352,20 @@ function App() {
     useWebSocket(serverUrl)
 
   const [speed, setSpeed] = useState<number>(SPEED_DEFAULT)
-  const [vehicleCount, setVehicleCount] = useState<number>(VEHICLE_DEFAULT)
+  const [vehicleCount, setVehicleCount] = useState<number>(() => {
+    const saved = localStorage.getItem('vehicleCount')
+    if (saved !== null) {
+      const parsed = parseInt(saved, 10)
+      if (Number.isFinite(parsed)) return clampVehicleCount(parsed)
+    }
+    return VEHICLE_DEFAULT
+  })
   const [isSelectingZone, setIsSelectingZone] = useState(false)
   const [irisData, setIrisData] = useState<IrisGeoJson | null>(null)
   const [irisMetricsByCode, setIrisMetricsByCode] = useState<Map<string, number> | null>(null)
   const [showIris, setShowIris] = useState(true)
-  const [irisOpacity, setIrisOpacity] = useState(0.7)
+  const [irisOpacity, setIrisOpacity] = useState(0.5)
+  const [sideMenuOpen, setSideMenuOpen] = useState(true)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const lastFetchedIrisLoadIdRef = useRef<number>(-1)
   const lastAutostartLoadIdRef = useRef<number>(-1)
@@ -398,7 +406,7 @@ function App() {
   }
 
   lastFetchedIrisLoadIdRef.current = loadEventId
-  const currentLoadId = loadEventId // On capture l'ID pour le scope asynchrone
+  const currentLoadId = loadEventId
 
   const vehiclesSnapshot = vehicles.map(vehicle => ({ x: vehicle.x, y: vehicle.y }))
 
@@ -412,7 +420,6 @@ function App() {
         if (geoJsonData.type === 'FeatureCollection' && Array.isArray(geoJsonData.features)) {
           const filteredIrisData = filterIrisByVehiclesBbox(geoJsonData, vehiclesSnapshot)
           
-          // Vérification anti-race-condition
           if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
             setIrisData(filteredIrisData)
           }
@@ -431,7 +438,6 @@ function App() {
         if (csvEntry) {
           const csvText = await csvEntry.async('string')
           
-          // Vérification anti-race-condition
           if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
             loadIrisCsvText(csvText)
           }
@@ -482,6 +488,7 @@ function App() {
   const commitVehicleCount = useCallback((e: React.PointerEvent<HTMLInputElement>) => {
     const val = clampVehicleCount(parseInt((e.target as HTMLInputElement).value, 10))
     setVehicleCount(val)
+    localStorage.setItem('vehicleCount', String(val))
     sendCommand('setVehicles', val)
   }, [sendCommand])
 
@@ -510,6 +517,7 @@ function App() {
     }
 
     setVehicleCount(nbVoitures)
+    localStorage.setItem('vehicleCount', String(nbVoitures))
 
     setIsSelectingZone(false)
     setIrisData(null)
@@ -560,6 +568,7 @@ function App() {
     }
 
     setVehicleCount(nbVoitures)
+    localStorage.setItem('vehicleCount', String(nbVoitures))
 
     setIrisData(null)
     setIrisMetricsByCode(null)
@@ -592,147 +601,181 @@ function App() {
             {isConnected ? 'Connecté' : 'Déconnecté'}
           </span>
         </div>
-
-        <div className="load-graph-zone">
-          <div className="zone-legend">Chargement d'un graphe routier</div>
-          
-          <div className="load-actions">
-            <button className="btn btn-upload" onClick={handleFileButtonClick} disabled={isLoadingGraph}>
-              Charger par fichier
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".osm,.xml"
-              onChange={handleOsmFileChange}
-              style={{ display: 'none' }}
-            />
-
-            <button className="btn btn-iris" onClick={handleZoneLoad} disabled={isLoadingGraph}>
-              {isSelectingZone ? 'Annuler la sélection' : 'Charger par zone'}
-            </button>
-
-            {isLoadingGraph && <span className="loading-hint">Chargement...</span>}
-
-            {!isLoadingGraph && serverMessage && (
-              <span className={`startup-hint ${loadState === 'error' ? 'error-message' : ''}`}>
-                {serverMessage}
-              </span>
-            )}
-          </div>
-        </div>
-
-        {isConnected && (
-          <div className="controls">
-            <div className="iris-controls">
-              <label htmlFor="iris-toggle" className="iris-checkbox-label">
-                <input
-                  id="iris-toggle"
-                  type="checkbox"
-                  checked={showIris}
-                  onChange={handleIrisToggle}
-                  className="iris-checkbox"
-                />
-                Afficher les IRIS
-              </label>
-
-              {showIris && (
-                <div className="iris-opacity-control">
-                  <label htmlFor="iris-opacity-slider">Opacité IRIS:</label>
-                  <input
-                    id="iris-opacity-slider"
-                    type="range"
-                    min="0"
-                    max="1"
-                    step="0.1"
-                    value={irisOpacity}
-                    onChange={handleIrisOpacityChange}
-                    className="iris-opacity-slider"
-                    style={{ '--pct': Math.round(irisOpacity * 100) } as React.CSSProperties}
-                  />
-                  <span className="opacity-value">{Math.round(irisOpacity * 100)}%</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {isConnected && (
-          <div className="sim-controls sim-controls-secondary">
-            <button
-              className={`ctrl-btn ctrl-playpause${pauseButtonIsPaused ? ' paused' : ''}`}
-              onClick={handlePauseResume}
-              title={pauseButtonTitle}
-            >
-              {pauseButtonIsPaused ? '▶' : '⏸'}
-              <span>{pauseButtonLabel}</span>
-            </button>
-
-            <div className="ctrl-sep" />
-
-            <div className="ctrl-speed-group">
-              <span className="ctrl-speed-label">Vitesse</span>
-              <span className="ctrl-vehicles-count">{formatSpeed(speed)}</span>
-              <input
-                type="range"
-                className="ctrl-vehicles-slider"
-                min={SPEED_MIN}
-                max={SPEED_MAX}
-                step={SPEED_STEP}
-                value={speed}
-                style={{ '--pct': `${((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100).toFixed(1)}` } as React.CSSProperties}
-                onChange={handleSpeedSlider}
-              />
-            </div>
-
-            <div className="ctrl-sep" />
-
-            <div className="ctrl-vehicles-group">
-              <span className="ctrl-speed-label">Véhicules</span>
-              <span className="ctrl-vehicles-count">{formatVehicleCount(vehicleCount)}</span>
-              <input
-                type="range"
-                className="ctrl-vehicles-slider"
-                min={VEHICLE_MIN}
-                max={VEHICLE_MAX}
-                step={VEHICLE_STEP}
-                value={vehicleCount}
-                style={{ '--pct': `${((vehicleCount - VEHICLE_MIN) / (VEHICLE_MAX - VEHICLE_MIN) * 100).toFixed(1)}` } as React.CSSProperties}
-                onChange={handleVehicleSlider}
-                onPointerUp={commitVehicleCount}
-              />
-            </div>
-
-            <div className={`sim-state-badge${isActive ? ' running' : simulationPaused ? ' paused' : ''}`}>
-              <span className="sim-state-dot" />
-              {isActive ? 'En cours' : simulationPaused ? 'En pause' : '—'}
-            </div>
-          </div>
-        )}
       </header>
 
       <main className="app-main">
+        {isConnected && (
+          <div className="side-menu-container">
+            <aside className={`side-menu ${sideMenuOpen ? 'open' : 'closed'}`}>
+              <div className="side-menu-content">
+              {/* Section chargement du graphe routier */}
+
+              <div className="menu-section">
+                <div className="menu-section-title">Chargement du graphe routier</div>
+                
+                <div className="load-actions">
+                  <button className="btn btn-upload" onClick={handleFileButtonClick} disabled={isLoadingGraph}>
+                    Charger par fichier
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".osm,.xml"
+                    onChange={handleOsmFileChange}
+                    style={{ display: 'none' }}
+                  />
+
+                  <button className="btn btn-iris" onClick={handleZoneLoad} disabled={isLoadingGraph}>
+                    {isSelectingZone ? 'Annuler' : 'Charger par zone'}
+                  </button>
+
+                  {isLoadingGraph && <span className="loading-hint">Chargement...</span>}
+
+                  {!isLoadingGraph && serverMessage && (
+                    <span className={`startup-hint ${loadState === 'error' ? 'error-message' : ''}`}>
+                      {serverMessage}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Section gestion de la simulation */}
+              <div className="menu-section">
+                <div className="menu-section-header">
+                  <div className="menu-section-title">Simulation</div>
+                  <div className={`sim-state-badge${isActive ? ' running' : simulationPaused ? ' paused' : ''}`}>
+                    <span className="sim-state-dot" />
+                    {isActive ? 'En cours' : simulationPaused ? 'En pause' : '—'}
+                  </div>
+                </div>
+                
+                <div className="menu-simulation-controls">
+                  <button
+                    className={`ctrl-btn ctrl-playpause${pauseButtonIsPaused ? ' paused' : ''}`}
+                    onClick={handlePauseResume}
+                    title={pauseButtonTitle}
+                  >
+                    <span
+                      className={`ctrl-playpause-icon${pauseButtonIsPaused ? ' ctrl-playpause-icon--play' : ' ctrl-playpause-icon--pause'}`}
+                      aria-hidden="true"
+                    >
+                      {pauseButtonIsPaused ? '▶' : '⏸'}
+                    </span>
+                    <span className="ctrl-playpause-label">{pauseButtonLabel}</span>
+                  </button>
+
+                  <div className="ctrl-speed-group">
+                    <span className="ctrl-speed-label">Vitesse</span>
+                    <span className="ctrl-vehicles-count">{formatSpeed(speed)}</span>
+                    <input
+                      type="range"
+                      className="ctrl-vehicles-slider"
+                      min={SPEED_MIN}
+                      max={SPEED_MAX}
+                      step={SPEED_STEP}
+                      value={speed}
+                      style={{ '--pct': `${((speed - SPEED_MIN) / (SPEED_MAX - SPEED_MIN) * 100).toFixed(1)}` } as React.CSSProperties}
+                      onChange={handleSpeedSlider}
+                    />
+                  </div>
+
+                  <div className="ctrl-vehicles-group">
+                    <span className="ctrl-speed-label">Véhicules</span>
+                    <span className="ctrl-vehicles-count">{formatVehicleCount(vehicleCount)}</span>
+                    <input
+                      type="range"
+                      className="ctrl-vehicles-slider"
+                      min={VEHICLE_MIN}
+                      max={VEHICLE_MAX}
+                      step={VEHICLE_STEP}
+                      value={vehicleCount}
+                      style={{ '--pct': `${((vehicleCount - VEHICLE_MIN) / (VEHICLE_MAX - VEHICLE_MIN) * 100).toFixed(1)}` } as React.CSSProperties}
+                      onChange={handleVehicleSlider}
+                      onPointerUp={commitVehicleCount}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Section gestion des IRIS */}
+              <div className="menu-section">
+                <div className="menu-section-title">IRIS</div>
+                
+                <div className="iris-controls">
+                  <label htmlFor="iris-toggle" className="iris-checkbox-label">
+                    <input
+                      id="iris-toggle"
+                      type="checkbox"
+                      checked={showIris}
+                      onChange={handleIrisToggle}
+                      className="iris-checkbox"
+                    />
+                    Afficher les IRIS
+                  </label>
+
+                  {showIris && (
+                    <div className="iris-opacity-control">
+                      <label htmlFor="iris-opacity-slider">Opacité:</label>
+                      <input
+                        id="iris-opacity-slider"
+                        type="range"
+                        min="0"
+                        max="1"
+                        step="0.1"
+                        value={irisOpacity}
+                        onChange={handleIrisOpacityChange}
+                        className="iris-opacity-slider"
+                        style={{ '--pct': Math.round(irisOpacity * 100) } as React.CSSProperties}
+                      />
+                      <span className="opacity-value">{Math.round(irisOpacity * 100)}%</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+            </aside>
+          </div>
+        )}
+
         {isConnected ? (
-          <MapViewer
-            //key={`map-${loadEventId}`}
-            vehicles={vehicles}
-            irisData={showIris ? irisData : null}
-            communeMotorizationByCode={irisMetricsByCode}
-            irisOpacity={irisOpacity}
-            initialLongitude={7.5}
-            initialLatitude={48.3}
-            initialZoom={11}
-            onAddVehicle={(lon, lat) => {
-              sendCommand('addVehicle', { lon, lat })
-              setVehicleCount(prev => prev + 1)
-            }}
-            onRemoveVehicle={(id) => {
-              sendCommand('removeVehicle', id)
-              setVehicleCount(prev => Math.max(0, prev - 1))
-            }}
-            isSelectingBbox={isSelectingZone}
-            onBboxSelected={handleBboxSelected}
-          />
+          <div className="map-wrapper">
+            <MapViewer
+              vehicles={vehicles}
+              irisData={showIris ? irisData : null}
+              communeMotorizationByCode={irisMetricsByCode}
+              irisOpacity={irisOpacity}
+              initialLongitude={7.5}
+              initialLatitude={48.3}
+              initialZoom={11}
+              onAddVehicle={(lon, lat) => {
+                sendCommand('addVehicle', { lon, lat })
+                setVehicleCount(prev => {
+                  const next = prev + 1
+                  localStorage.setItem('vehicleCount', String(next))
+                  return next
+                })
+              }}
+              onRemoveVehicle={(id) => {
+                sendCommand('removeVehicle', id)
+                setVehicleCount(prev => {
+                  const next = Math.max(0, prev - 1)
+                  localStorage.setItem('vehicleCount', String(next))
+                  return next
+                })
+              }}
+              isSelectingBbox={isSelectingZone}
+              onBboxSelected={handleBboxSelected}
+            />
+            <button
+              className={`side-menu-toggle ${sideMenuOpen ? 'open' : 'closed'}`}
+              onClick={() => setSideMenuOpen(!sideMenuOpen)}
+              title={sideMenuOpen ? 'Fermer le panneau' : 'Ouvrir le panneau'}
+            >
+              <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          </div>
         ) : (
           <div className="loading">
             <p>Connexion en cours…</p>
