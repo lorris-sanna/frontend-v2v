@@ -266,6 +266,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [traceOpacity, setTraceOpacity] = useState(0.82);
   const [is3D, setIs3D] = useState(true);
+  const [isLeftMouseDown, setIsLeftMouseDown] = useState(false);
+  const [isHoveringVehicle, setIsHoveringVehicle] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
   const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
 
@@ -432,6 +434,11 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     };
   }, []);
 
+  const handleMouseLeave = useCallback(() => {
+    setIsLeftMouseDown(false);
+    setIsHoveringVehicle(false);
+  }, []);
+
   const handleSelectionMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!isSelectingBbox || event.button !== 0) {
       return;
@@ -506,6 +513,22 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     setDragCurrent(null);
   }, [dragCurrent, dragStart, isSelectingBbox, onBboxSelected]);
 
+  const handleMapMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 0) {
+      setIsLeftMouseDown(true);
+    }
+
+    handleSelectionMouseDown(event);
+  }, [handleSelectionMouseDown]);
+
+  const handleMapMouseUp = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button === 0) {
+      setIsLeftMouseDown(false);
+    }
+
+    handleSelectionMouseUp(event);
+  }, [handleSelectionMouseUp]);
+
   const selectionRect = useMemo(() => {
     if (!dragStart || !dragCurrent) {
       return null;
@@ -570,6 +593,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         id: 'vehicles',
         data: vehicles,
         pickable: true,
+        billboard: false,
         iconAtlas: atlasRef.current,
         iconMapping: ICON_MAPPING,
         getIcon: () => 'car',
@@ -617,12 +641,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         width: '100%',
         height: '100%',
         position: 'relative',
-        cursor: isSelectingBbox ? 'crosshair' : undefined,
+        cursor: isSelectingBbox ? 'crosshair' : isLeftMouseDown ? 'grabbing' : 'grab',
       }}
       onContextMenu={e => e.preventDefault()}
-      onMouseDown={handleSelectionMouseDown}
+      onMouseDown={handleMapMouseDown}
+      onMouseUp={handleMapMouseUp}
+      onMouseLeave={handleMouseLeave}
       onMouseMove={handleSelectionMouseMove}
-      onMouseUp={handleSelectionMouseUp}
     >
       <MapGL
         {...viewState}
@@ -645,15 +670,18 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           layers={layers}
           onViewStateChange={(e: any) => setViewState(e.viewState)}
           onClick={onDeckClick}
+          onHover={({ object, layer }: { object?: unknown; layer?: { id?: string } | null }) => {
+            setIsHoveringVehicle(Boolean(object && layer?.id === 'vehicles'));
+          }}
           style={{ width: '100%', height: '100%' }}
-          getCursor={({ isDragging, isHovering }: any) =>
+          getCursor={({ isDragging }: { isDragging: boolean }) =>
             isSelectingBbox
               ? 'crosshair'
-              : isDragging
+              : isDragging || isLeftMouseDown
                 ? 'grabbing'
-                : isHovering
+                : isHoveringVehicle
                   ? 'pointer'
-                  : 'crosshair'
+                  : 'grab'
           }
           getTooltip={({ object, layer }: { object?: IrisFeature | null; layer?: { id?: string } | null }) => {
             if (!object || !communeMotorizationByCode || layer?.id !== 'iris-layer') {
