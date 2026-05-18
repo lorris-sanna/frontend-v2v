@@ -292,42 +292,52 @@ const bboxesIntersect = (bbox1: BBox, bbox2: BBox, padding = 0.01): boolean => {
   )
 }
 
-const filterIrisByVehiclesBbox = (allIrisData: IrisGeoJson, vehiclesList: Array<{ x: number; y: number }>): IrisGeoJson => {
-  if (vehiclesList.length === 0 || !allIrisData.features) {
-    return allIrisData
+const filterIrisByGraphBbox = (
+  allIrisData: IrisGeoJson,
+  graphBbox: BBox | null,
+  vehiclesList: Array<{ x: number; y: number }>
+): IrisGeoJson => {
+  if (!allIrisData.features) return allIrisData
+
+  let bboxToUse: BBox | null = graphBbox
+
+  if (!bboxToUse) {
+    if (vehiclesList.length === 0) return allIrisData
+
+    let minLon = vehiclesList[0].x
+    let maxLon = vehiclesList[0].x
+    let minLat = vehiclesList[0].y
+    let maxLat = vehiclesList[0].y
+
+    for (const vehicle of vehiclesList) {
+      if (vehicle.x < minLon) minLon = vehicle.x
+      if (vehicle.x > maxLon) maxLon = vehicle.x
+      if (vehicle.y < minLat) minLat = vehicle.y
+      if (vehicle.y > maxLat) maxLat = vehicle.y
+    }
+
+    bboxToUse = { minLon, maxLon, minLat, maxLat }
   }
-
-  let minLon = vehiclesList[0].x
-  let maxLon = vehiclesList[0].x
-  let minLat = vehiclesList[0].y
-  let maxLat = vehiclesList[0].y
-
-  for (const vehicle of vehiclesList) {
-    if (vehicle.x < minLon) minLon = vehicle.x
-    if (vehicle.x > maxLon) maxLon = vehicle.x
-    if (vehicle.y < minLat) minLat = vehicle.y
-    if (vehicle.y > maxLat) maxLat = vehicle.y
-  }
-
-  const vehiclesBbox: BBox = { minLon, maxLon, minLat, maxLat }
 
   const filteredFeatures = allIrisData.features.filter(feature => {
-    if (!feature || typeof feature !== 'object') {
-      return false
-    }
+    if (!feature || typeof feature !== 'object') return false
 
     const geometry = (feature as Record<string, unknown>).geometry
     const bounds = extractGeometryBounds(geometry as Record<string, unknown>)
 
-    if (!bounds) {
-      return false
-    }
+    if (!bounds) return false
 
-    if (!bboxesIntersect(bounds, vehiclesBbox)) {
-      return false
-    }
+    const graphBB = bboxToUse as BBox
 
-    return vehiclesList.some(vehicle => pointInGeometry([vehicle.x, vehicle.y], geometry))
+    const centerLon = (bounds.minLon + bounds.maxLon) / 2
+    const centerLat = (bounds.minLat + bounds.maxLat) / 2
+
+    return (
+      centerLon >= graphBB.minLon &&
+      centerLon <= graphBB.maxLon &&
+      centerLat >= graphBB.minLat &&
+      centerLat <= graphBB.maxLat
+    )
   })
 
   return {
@@ -364,6 +374,7 @@ function App() {
   const [irisData, setIrisData] = useState<IrisGeoJson | null>(null)
   const [irisMetricsByCode, setIrisMetricsByCode] = useState<Map<string, number> | null>(null)
   const [showIris, setShowIris] = useState(true)
+  const [graphBBox, setGraphBBox] = useState<BBox | null>(null)
   const [irisOpacity, setIrisOpacity] = useState(0.5)
   const [sideMenuOpen, setSideMenuOpen] = useState(true)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -418,8 +429,8 @@ function App() {
         const geoJsonData = (await geoJsonResponse.json()) as IrisGeoJson
 
         if (geoJsonData.type === 'FeatureCollection' && Array.isArray(geoJsonData.features)) {
-          const filteredIrisData = filterIrisByVehiclesBbox(geoJsonData, vehiclesSnapshot)
-          
+          const filteredIrisData = filterIrisByGraphBbox(geoJsonData, graphBBox, vehiclesSnapshot)
+
           if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
             setIrisData(filteredIrisData)
           }
@@ -451,7 +462,7 @@ function App() {
       }
     }
   })()
-}, [isGraphLoaded, loadEventId, loadIrisCsvText, vehicles, simulationRunning])
+}, [isGraphLoaded, loadEventId, loadIrisCsvText, vehicles, simulationRunning, graphBBox])
 
   useEffect(() => {
     if (!isGraphLoaded || simulationRunning) {
@@ -529,6 +540,40 @@ function App() {
       const content = readerEvent.target?.result
 
       if (typeof content === 'string') {
+        try {
+          const xml = content
+          const nodeTagRe = /<node\b([^>]*)>/g
+          let m: RegExpExecArray | null
+          let found = false
+          let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity
+
+          while ((m = nodeTagRe.exec(xml)) !== null) {
+            const attrs = m[1]
+            const latMatch = attrs.match(/lat="([^"]+)"/)
+            const lonMatch = attrs.match(/lon="([^"]+)"/)
+
+            if (latMatch && lonMatch) {
+              const lat = Number.parseFloat(latMatch[1])
+              const lon = Number.parseFloat(lonMatch[1])
+              if (Number.isFinite(lat) && Number.isFinite(lon)) {
+                found = true
+                if (lon < minLon) minLon = lon
+                if (lon > maxLon) maxLon = lon
+                if (lat < minLat) minLat = lat
+                if (lat > maxLat) maxLat = lat
+              }
+            }
+          }
+
+          if (found) {
+            setGraphBBox({ minLon, minLat, maxLon, maxLat })
+          } else {
+            setGraphBBox(null)
+          }
+        } catch (e) {
+          setGraphBBox(null)
+        }
+
         sendCommand('loadOsmContent', {
           osmContent: content,
           nbVoitures,
@@ -572,6 +617,8 @@ function App() {
 
     setIrisData(null)
     setIrisMetricsByCode(null)
+
+    setGraphBBox({ minLon, minLat, maxLon, maxLat })
 
     sendCommand('loadOsmBbox', {
       bbox: { minLon, minLat, maxLon, maxLat },
