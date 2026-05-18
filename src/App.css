@@ -329,7 +329,7 @@
   border-radius: 10px;
   color: rgba(200, 205, 230, 0.7);
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
   font-size: 0.9rem;
   flex-shrink: 0;
   z-index: 20;

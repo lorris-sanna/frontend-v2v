@@ -819,6 +819,7 @@ function App() {
               className={`side-menu-toggle ${sideMenuOpen ? 'open' : 'closed'}`}
               onClick={() => setSideMenuOpen(!sideMenuOpen)}
               title={sideMenuOpen ? 'Fermer le panneau' : 'Ouvrir le panneau'}
+              style={{ left: sideMenuOpen ? `${SIDE_MENU_WIDTH + 12}px` : '12px' }}
             >
               <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
                 <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
