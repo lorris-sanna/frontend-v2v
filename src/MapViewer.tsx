@@ -51,14 +51,13 @@ interface MapViewerProps {
   irisOpacity?: number;
 }
 
-// Taille de l'atlas (px) — la même pour l'image réelle et le fallback
+//taille de l'atlas en px
 const ATLAS_SIZE = 128;
 
 const ICON_MAPPING = {
   car: { x: 0, y: 0, width: ATLAS_SIZE, height: ATLAS_SIZE, mask: false },
 };
 
-// Correction d'orientation : le nez de car.jpg pointe vers la droite (Est) → offset +90°
 const CAR_ANGLE_OFFSET = 90;
 
 const MAX_TRACE = 300;
@@ -132,27 +131,26 @@ const formatPercentage = (value: number | null) => {
 
 const colorFromRate = (value: number | null) => {
   if (value === null || Number.isNaN(value)) {
-    return [148, 163, 184, 80] as const; // Gris transparent
+    return [148, 163, 184, 80] as const; //gris transparent
   }
 
   const alpha = 170;
 
-  // Échelle de densité : du plus clair (peu) au plus foncé (beaucoup)
+  //du plus clair au plus foncé
   if (value < 55) {
-    return [255, 255, 178, alpha] as const; // Jaune pâle : très peu de voitures
+    return [255, 255, 178, alpha] as const; //jaune clair, très peu de voitures
   }
   if (value < 65) {
-    return [254, 204, 92, alpha] as const;  // Jaune-Orange : peu de voitures
+    return [254, 204, 92, alpha] as const;  //jaune fonce, peu de voitures
   }
   if (value < 75) {
-    return [253, 141, 60, alpha] as const;  // Orange : moyenne
+    return [253, 141, 60, alpha] as const;  //orange, moyenne
   }
   if (value < 85) {
-    return [240, 59, 32, alpha] as const;   // Rouge : beaucoup de voitures
+    return [240, 59, 32, alpha] as const;   //rouge, beaucoup de voitures
   }
   
-  // value >= 85
-  return [189, 0, 38, alpha] as const;      // Rouge foncé : énorme densité de voitures
+  return [189, 0, 38, alpha] as const;      //rouge fonce, enormement de voitures
 };
 
 function bearing(lon1: number, lat1: number, lon2: number, lat2: number): number {
@@ -163,7 +161,7 @@ function bearing(lon1: number, lat1: number, lon2: number, lat2: number): number
   return Math.atan2(dLon * Math.cos(latRad), dLat) * (180 / Math.PI);
 }
 
-// Silhouette de fallback si l'image réelle n'est pas disponible
+//fallback si l'image reelle n'est pas disponible
 function buildFallbackAtlas(): HTMLCanvasElement {
   const c = document.createElement('canvas');
   c.width = ATLAS_SIZE;
@@ -189,7 +187,7 @@ function buildFallbackAtlas(): HTMLCanvasElement {
   return c;
 }
 
-// Charge /car-top.png, supprime le fond blanc par analyse pixel, renvoie le canvas
+//charge /car-top.png, supprime le fond blanc, renvoie le canvas
 function loadCarAtlas(): Promise<HTMLCanvasElement> {
   return new Promise(resolve => {
     const img = new Image();
@@ -200,13 +198,11 @@ function loadCarAtlas(): Promise<HTMLCanvasElement> {
       canvas.height = ATLAS_SIZE;
       const ctx = canvas.getContext('2d')!;
 
-      // Centrer et scaler l'image dans le canvas
       const scale = Math.min(ATLAS_SIZE / img.width, ATLAS_SIZE / img.height) * 0.92;
       const w = img.width * scale;
       const h = img.height * scale;
       ctx.drawImage(img, (ATLAS_SIZE - w) / 2, (ATLAS_SIZE - h) / 2, w, h);
 
-      // Suppression du fond blanc/gris clair pixel par pixel
       const id = ctx.getImageData(0, 0, ATLAS_SIZE, ATLAS_SIZE);
       const d = id.data;
       for (let i = 0; i < d.length; i += 4) {
@@ -214,9 +210,8 @@ function loadCarAtlas(): Promise<HTMLCanvasElement> {
         const brightness = (r + g + b) / 3;
         const saturation = Math.max(r, g, b) - Math.min(r, g, b);
         if (brightness > 238 && saturation < 18) {
-          d[i + 3] = 0; // pixel blanc pur → transparent
+          d[i + 3] = 0;
         } else if (brightness > 210 && saturation < 35) {
-          // Zone de transition (ombre légère) → fondu
           d[i + 3] = Math.round(d[i + 3] * (1 - (brightness - 210) / 28));
         }
       }
@@ -279,7 +274,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const traceRef = useRef<Pos2[]>([]);
   const prevPosRef = useRef<Map<number, Pos2>>(new Map());
   const anglesRef = useRef<Map<number, number>>(new Map());
-  // Vecteurs unitaires (cos, sin) pour le lissage circulaire de l'angle
   const angleVecRef = useRef<Map<number, [number, number]>>(new Map());
 
   useEffect(() => {
@@ -351,8 +345,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   }, [vehicles]);
 
   useEffect(() => {
-    const ALPHA = 0.3;      // lissage : 0 = figé, 1 = instantané
-    const MIN_DIST = 1e-6;  // ~0.1 m — ignore les micro-tremblements
+    const ALPHA = 0.3;
+    const MIN_DIST = 1e-6;
 
     for (const v of vehicles) {
       const prev = prevPosRef.current.get(v.id);
@@ -367,7 +361,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
           const vec = angleVecRef.current.get(v.id);
           if (vec) {
-            // EMA sur vecteur unitaire → pas de saut circulaire (ex. -179° → +179°)
             const sc = vec[0] * (1 - ALPHA) + nc * ALPHA;
             const ss = vec[1] * (1 - ALPHA) + ns * ALPHA;
             angleVecRef.current.set(v.id, [sc, ss]);
@@ -644,7 +637,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         attributionControl={false}
         style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
       >
-        <NavigationControl position="top-left" />
+        <NavigationControl position="top-right" />
 
         <DeckGL
           viewState={viewState}
@@ -810,7 +803,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
             border: '1px solid rgba(148, 163, 184, 0.35)',
           }}
         >
-          Cliquer-dragger sur la carte pour sélectionner une zone
+          Cliquer-déplacer sur la carte pour sélectionner une zone
         </div>
       )}
 
