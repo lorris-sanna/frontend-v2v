@@ -268,7 +268,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   const hasCenteredRef = useRef(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [traceOpacity, setTraceOpacity] = useState(0.82);
+  const [traceOpacity, setTraceOpacity] = useState(1.00);
   const [is3D, setIs3D] = useState(true);
   const [isLeftMouseDown, setIsLeftMouseDown] = useState(false);
   const [isHoveringVehicle, setIsHoveringVehicle] = useState(false);
@@ -602,17 +602,18 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         iconMapping: ICON_MAPPING,
         getIcon: () => 'car',
         
-        getPosition: (d: Vehicle) => [d.x, d.y, 5], 
-        
+        getPosition: (d: Vehicle) => [d.x, d.y, 1.5],
+
         getSize: (d: Vehicle) => (d.id === selectedId ? 42 : 28),
         getAngle: (d: Vehicle) => -(anglesRef.current.get(d.id) ?? 0) + CAR_ANGLE_OFFSET,
         getColor: (d: Vehicle) =>
           d.id === selectedId
             ? ([255, 230, 60, 255] as [number, number, number, number])
             : ([255, 255, 255, 220] as [number, number, number, number]),
-            
+
         parameters: {
-          depthTest: false
+          depthTest: true,
+          depthWriteEnabled: true,
         },
 
         updateTriggers: {
