@@ -758,7 +758,7 @@ function App() {
                       onChange={handleIrisToggle}
                       className="iris-checkbox"
                     />
-                    Afficher les IRIS
+                    Afficher les statistiques par IRIS
                   </label>
 
                   {showIris && (
