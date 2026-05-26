@@ -11,6 +11,7 @@ interface Vehicle {
   y: number;
   angle: number;
   vitesse: number;
+  isRespawning?: boolean;
 }
 
 type Pos2 = [number, number];
@@ -355,6 +356,13 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     const MIN_DIST = 1e-6;
 
     for (const v of vehicles) {
+      if (v.isRespawning) {
+        prevPosRef.current.delete(v.id);
+        anglesRef.current.delete(v.id);
+        angleVecRef.current.delete(v.id);
+        continue;
+      }
+
       const prev = prevPosRef.current.get(v.id);
       if (prev) {
         const dLon = v.x - prev[0];
@@ -601,15 +609,16 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         iconAtlas: atlasRef.current,
         iconMapping: ICON_MAPPING,
         getIcon: () => 'car',
-        
         getPosition: (d: Vehicle) => [d.x, d.y, 1.5],
 
-        getSize: (d: Vehicle) => (d.id === selectedId ? 42 : 28),
-        getAngle: (d: Vehicle) => -(anglesRef.current.get(d.id) ?? 0) + CAR_ANGLE_OFFSET,
+        getSize: (d: Vehicle) => (d.isRespawning ? 0 : d.id === selectedId ? 42 : 28),
+        getAngle: (d: Vehicle) => (d.isRespawning ? 0 : -(anglesRef.current.get(d.id) ?? 0) + CAR_ANGLE_OFFSET),
         getColor: (d: Vehicle) =>
-          d.id === selectedId
-            ? ([255, 230, 60, 255] as [number, number, number, number])
-            : ([255, 255, 255, 220] as [number, number, number, number]),
+          d.isRespawning
+            ? ([0, 0, 0, 0] as [number, number, number, number])
+            : d.id === selectedId
+              ? ([255, 230, 60, 255] as [number, number, number, number])
+              : ([255, 255, 255, 220] as [number, number, number, number]),
 
         parameters: {
           depthTest: true,
@@ -619,7 +628,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         updateTriggers: {
           getColor: [selectedId],
           getAngle: vehicles.length,
-          getSize: selectedId,
+          getSize: [selectedId],
         },
         transitions: { getPosition: { duration: 200 } },
       }));
