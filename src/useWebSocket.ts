@@ -6,6 +6,7 @@ interface Vehicle {
   y: number;
   angle: number;
   vitesse: number;
+  isRespawning?: boolean;
 }
 
 interface ServerMessage {
@@ -61,7 +62,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
         setError(null);
         attemptRef.current = 0;
 
-        // flush queued commands
         while (sendQueueRef.current.length > 0 && socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
           const payload = sendQueueRef.current.shift()!;
           socketRef.current.send(JSON.stringify(payload));
@@ -121,7 +121,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
           return;
         }
 
-        // try reconnect with exponential backoff
         attemptRef.current = Math.min(10, attemptRef.current + 1);
         const delay = Math.min(30000, 500 * 2 ** attemptRef.current);
 
@@ -129,7 +128,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
           window.clearTimeout(reconnectTimerRef.current);
         }
 
-        // schedule reconnect
         reconnectTimerRef.current = window.setTimeout(() => {
           createSocket();
         }, delay);
@@ -146,9 +144,7 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
       };
     };
 
-    // create initial socket
     const cleanup = createSocket();
-    // cleanup is the inner return function
     return cleanup as () => void;
   }, [socketUrl]);
 
@@ -165,7 +161,6 @@ export const useWebSocket = (url: string = 'http://localhost:8080'): UseWebSocke
     }
 
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
-      // queue the command to be sent when socket reconnects
       sendQueueRef.current.push(payload);
       setError('WebSocket non connecté — commande mise en file d\'attente');
       return;

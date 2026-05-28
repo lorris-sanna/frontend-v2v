@@ -277,22 +277,6 @@ const pointInGeometry = (point: [number, number], geometry: unknown): boolean =>
   return false
 }
 
-const bboxesIntersect = (bbox1: BBox, bbox2: BBox, padding = 0.01): boolean => {
-  const padded = {
-    minLon: bbox2.minLon - padding,
-    maxLon: bbox2.maxLon + padding,
-    minLat: bbox2.minLat - padding,
-    maxLat: bbox2.maxLat + padding,
-  }
-
-  return !(
-    bbox1.maxLon < padded.minLon ||
-    bbox1.minLon > padded.maxLon ||
-    bbox1.maxLat < padded.minLat ||
-    bbox1.minLat > padded.maxLat
-  )
-}
-
 const filterIrisByGraphBbox = (
   allIrisData: IrisGeoJson,
   graphBbox: BBox | null,
@@ -374,13 +358,15 @@ function App() {
   const [isSelectingZone, setIsSelectingZone] = useState(false)
   const [irisData, setIrisData] = useState<IrisGeoJson | null>(null)
   const [irisMetricsByCode, setIrisMetricsByCode] = useState<Map<string, number> | null>(null)
-  const [showIris, setShowIris] = useState(true)
+  type IrisMode = 'none' | 'static' | 'dynamic';
+  const [irisMode, setIrisMode] = useState<IrisMode>('none');
   const [graphBBox, setGraphBBox] = useState<BBox | null>(null)
   const [irisOpacity, setIrisOpacity] = useState(0.5)
   const [flatMap, setFlatMap] = useState(false)
   const [sideMenuOpen, setSideMenuOpen] = useState(true)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const lastFetchedIrisLoadIdRef = useRef<number>(-1)
+  const lastFetchedGeoJsonLoadIdRef = useRef<number>(-1)
+  const lastFetchedCsvLoadIdRef = useRef<number>(-1)
   const lastAutostartLoadIdRef = useRef<number>(-1)
 
   const isLoadingGraph = loadState === 'loading'
@@ -388,18 +374,18 @@ function App() {
 
   const loadIrisCsvText = useCallback((csvText: string) => {
     try {
-      const parsed = Papa.parse<Record<string, unknown>>(csvText, {
+      const parsed = Papa.parse(csvText, {
         header: true,
         skipEmptyLines: true,
         dynamicTyping: false,
         delimitersToGuess: [';', ',', '\t', '|'],
-      })
+      }) as { data: Record<string, unknown>[]; errors: Array<{ message?: string }> }
 
       if (parsed.errors.length > 0) {
         throw new Error(parsed.errors[0]?.message || 'Impossible de parser le CSV.')
       }
 
-      const rows = parsed.data.filter(row => row && Object.keys(row).length > 0)
+      const rows = parsed.data.filter((row: Record<string, unknown>) => row && Object.keys(row).length > 0)
       const analysis = buildIrisMotorizationMap(rows)
 
       setIrisMetricsByCode(analysis.valuesByCode)
@@ -410,61 +396,65 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!isGraphLoaded || vehicles.length === 0 || !simulationRunning) {
+    if (!isGraphLoaded) {
       return
     }
 
-    if (lastFetchedIrisLoadIdRef.current === loadEventId) {
-    return
-  }
+    const currentLoadId = loadEventId
+    const needsGeoJson = irisMode !== 'none'
+    const needsCsv = irisMode === 'static'
 
-  lastFetchedIrisLoadIdRef.current = loadEventId
-  const currentLoadId = loadEventId
+    if (needsGeoJson && lastFetchedGeoJsonLoadIdRef.current !== currentLoadId) {
+      lastFetchedGeoJsonLoadIdRef.current = currentLoadId
+      
+      const vehiclesSnapshot = vehicles.map(vehicle => ({ x: vehicle.x, y: vehicle.y }))
 
-  const vehiclesSnapshot = vehicles.map(vehicle => ({ x: vehicle.x, y: vehicle.y }))
-
-  void (async () => {
-    try {
-      const geoJsonResponse = await fetch('/iris.geojson')
-
-      if (geoJsonResponse.ok) {
-        const geoJsonData = (await geoJsonResponse.json()) as IrisGeoJson
-
-        if (geoJsonData.type === 'FeatureCollection' && Array.isArray(geoJsonData.features)) {
-          const filteredIrisData = filterIrisByGraphBbox(geoJsonData, graphBBox, vehiclesSnapshot)
-
-          if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
-            setIrisData(filteredIrisData)
+      void (async () => {
+        try {
+          const geoJsonResponse = await fetch('/iris.geojson')
+          if (geoJsonResponse.ok) {
+            const geoJsonData = (await geoJsonResponse.json()) as IrisGeoJson
+            if (geoJsonData.type === 'FeatureCollection' && Array.isArray(geoJsonData.features)) {
+              const filteredIrisData = filterIrisByGraphBbox(geoJsonData, graphBBox, vehiclesSnapshot)
+              if (lastFetchedGeoJsonLoadIdRef.current === currentLoadId) {
+                setIrisData(filteredIrisData)
+              }
+            }
           }
+        } catch (loadError) {
+          console.error('Erreur GeoJSON', loadError)
+          if (lastFetchedGeoJsonLoadIdRef.current === currentLoadId) setIrisData(null)
         }
-      }
-
-      const zipResponse = await fetch('/base-ic-logement-2022_csv.zip')
-
-      if (zipResponse.ok) {
-        const zipBuffer = await zipResponse.arrayBuffer()
-        const archive = await JSZip.loadAsync(zipBuffer)
-        const csvEntry = Object.values(archive.files).find(
-          entry => !entry.dir && entry.name.toLowerCase().endsWith('.csv')
-        )
-
-        if (csvEntry) {
-          const csvText = await csvEntry.async('string')
-          
-          if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
-            loadIrisCsvText(csvText)
-          }
-        }
-      }
-    } catch (loadError) {
-      console.error('Erreur lors du chargement automatique des assets IRIS', loadError)
-      if (lastFetchedIrisLoadIdRef.current === currentLoadId) {
-        setIrisData(null)
-        setIrisMetricsByCode(null)
-      }
+      })()
     }
-  })()
-}, [isGraphLoaded, loadEventId, loadIrisCsvText, vehicles, simulationRunning, graphBBox])
+
+    //chargement du CSV
+    if (needsCsv && lastFetchedCsvLoadIdRef.current !== currentLoadId) {
+      lastFetchedCsvLoadIdRef.current = currentLoadId
+
+      void (async () => {
+        try {
+          const zipResponse = await fetch('/base-ic-logement-2022_csv.zip')
+          if (zipResponse.ok) {
+            const zipBuffer = await zipResponse.arrayBuffer()
+            const archive = await JSZip.loadAsync(zipBuffer)
+            const csvEntry = Object.values(archive.files).find(
+              entry => !entry.dir && entry.name.toLowerCase().endsWith('.csv')
+            )
+            if (csvEntry) {
+              const csvText = await csvEntry.async('string')
+              if (lastFetchedCsvLoadIdRef.current === currentLoadId) {
+                loadIrisCsvText(csvText)
+              }
+            }
+          }
+        } catch (loadError) {
+          console.error('Erreur CSV', loadError)
+          if (lastFetchedCsvLoadIdRef.current === currentLoadId) setIrisMetricsByCode(null)
+        }
+      })()
+    }
+  }, [isGraphLoaded, loadEventId, graphBBox, irisMode, loadIrisCsvText])
 
   useEffect(() => {
     if (!isGraphLoaded || simulationRunning) {
@@ -772,18 +762,49 @@ function App() {
                 <div className="menu-section-title">IRIS</div>
                 
                 <div className="iris-controls">
-                  <label htmlFor="iris-toggle" className="iris-checkbox-label">
-                    <input
-                      id="iris-toggle"
-                      type="checkbox"
-                      checked={showIris}
-                      onChange={handleIrisToggle}
-                      className="iris-checkbox"
-                    />
-                    Afficher les statistiques par IRIS
-                  </label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '16px' }}>
+                    <label className="iris-checkbox-label" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="irisMode"
+                        value="none"
+                        checked={irisMode === 'none'}
+                        onChange={() => setIrisMode('none')}
+                        className="iris-checkbox"
+                        style={{ marginRight: '8px' }}
+                      />
+                      Masquer les IRIS
+                    </label>
 
-                  {showIris && (
+                    <label className="iris-checkbox-label" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="irisMode"
+                        value="static"
+                        checked={irisMode === 'static'}
+                        onChange={() => setIrisMode('static')}
+                        className="iris-checkbox"
+                        style={{ marginRight: '8px' }}
+                      />
+                      Statistiques statiques par IRIS
+                    </label>
+
+                    <label className="iris-checkbox-label" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="radio"
+                        name="irisMode"
+                        value="dynamic"
+                        checked={irisMode === 'dynamic'}
+                        onChange={() => setIrisMode('dynamic')}
+                        className="iris-checkbox"
+                        style={{ marginRight: '8px' }}
+                      />
+                      Statistiques dynamiques par IRIS
+                    </label>
+                  </div>
+
+                  {/* le slider d'opacite ne s'affiche que si on a selectionne un mode */}
+                  {irisMode !== 'none' && (
                     <div className="iris-opacity-control">
                       <label htmlFor="iris-opacity-slider">Opacité:</label>
                       <input
@@ -811,8 +832,9 @@ function App() {
           <div className="map-wrapper">
             <MapViewer
               vehicles={vehicles}
-              irisData={showIris ? irisData : null}
-              communeMotorizationByCode={irisMetricsByCode}
+              irisData={irisData}
+              communeMotorizationByCode={irisMode === 'static' ? irisMetricsByCode : null}
+              dynamicIrisEnabled={irisMode === 'dynamic'}
               irisOpacity={irisOpacity}
               sidebarVisibleWidth={sideMenuOpen ? SIDE_MENU_WIDTH : 0}
               initialLongitude={7.5}
