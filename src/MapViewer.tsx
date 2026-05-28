@@ -35,6 +35,8 @@ type MapLike = {
   getCanvas?: () => HTMLCanvasElement;
   unproject: (point: [number, number]) => { lng: number; lat: number };
   resize?: () => void;
+  getStyle?: () => { layers?: Array<{ id: string; type: string }> };
+  setLayoutProperty?: (layerId: string, name: string, value: unknown) => void;
 }
 
 interface MapViewerProps {
@@ -50,6 +52,7 @@ interface MapViewerProps {
   irisData?: IrisGeoJson | null;
   communeMotorizationByCode?: Map<string, number> | null;
   irisOpacity?: number;
+  flat?: boolean;
 }
 
 //taille de l'atlas en px
@@ -154,13 +157,6 @@ const colorFromRate = (value: number | null) => {
   return [189, 0, 38, alpha] as const;      //rouge fonce, enormement de voitures
 };
 
-function bearing(lon1: number, lat1: number, lon2: number, lat2: number): number {
-  const dLon = lon2 - lon1;
-  const dLat = lat2 - lat1;
-  if (Math.abs(dLon) < 1e-9 && Math.abs(dLat) < 1e-9) return 0;
-  const latRad = lat1 * (Math.PI / 180);
-  return Math.atan2(dLon * Math.cos(latRad), dLat) * (180 / Math.PI);
-}
 
 //fallback si l'image reelle n'est pas disponible
 function buildFallbackAtlas(): HTMLCanvasElement {
@@ -253,6 +249,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   irisData,
   communeMotorizationByCode,
   irisOpacity = 0.7,
+  flat = false,
 }) => {
   const hintsCenterLeft = `calc(50% + ${Math.max(0, sidebarVisibleWidth) / 2}px)`;
 
@@ -269,7 +266,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const hasCenteredRef = useRef(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [traceOpacity, setTraceOpacity] = useState(1.00);
-  const [is3D, setIs3D] = useState(true);
   const [isLeftMouseDown, setIsLeftMouseDown] = useState(false);
   const [isHoveringVehicle, setIsHoveringVehicle] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null);
@@ -278,7 +274,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const atlasRef = useRef<HTMLCanvasElement | null>(null);
   const [atlasReady, setAtlasReady] = useState(false);
   const traceRef = useRef<Pos2[]>([]);
-  const prevPosRef = useRef<Map<number, Pos2>>(new Map());
   const anglesRef = useRef<Map<number, number>>(new Map());
   const angleVecRef = useRef<Map<number, [number, number]>>(new Map());
 
@@ -308,7 +303,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
 
     traceRef.current = [];
-    prevPosRef.current.clear();
     anglesRef.current.clear();
     angleVecRef.current.clear();
   }, [vehicles.length, selectedId]);
@@ -351,33 +345,24 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   }, [vehicles]);
 
   useEffect(() => {
-    const ALPHA = 0.3;
-    const MIN_DIST = 1e-6;
+    const ALPHA = 0.5;
 
     for (const v of vehicles) {
-      const prev = prevPosRef.current.get(v.id);
-      if (prev) {
-        const dLon = v.x - prev[0];
-        const dLat = v.y - prev[1];
-        if (Math.abs(dLon) > MIN_DIST || Math.abs(dLat) > MIN_DIST) {
-          const b = bearing(prev[0], prev[1], v.x, v.y);
-          const rad = b * (Math.PI / 180);
-          const nc = Math.cos(rad);
-          const ns = Math.sin(rad);
+      const b = v.angle;
+      const rad = b * (Math.PI / 180);
+      const nc = Math.cos(rad);
+      const ns = Math.sin(rad);
 
-          const vec = angleVecRef.current.get(v.id);
-          if (vec) {
-            const sc = vec[0] * (1 - ALPHA) + nc * ALPHA;
-            const ss = vec[1] * (1 - ALPHA) + ns * ALPHA;
-            angleVecRef.current.set(v.id, [sc, ss]);
-            anglesRef.current.set(v.id, Math.atan2(ss, sc) * (180 / Math.PI));
-          } else {
-            angleVecRef.current.set(v.id, [nc, ns]);
-            anglesRef.current.set(v.id, b);
-          }
-        }
+      const vec = angleVecRef.current.get(v.id);
+      if (vec) {
+        const sc = vec[0] * (1 - ALPHA) + nc * ALPHA;
+        const ss = vec[1] * (1 - ALPHA) + ns * ALPHA;
+        angleVecRef.current.set(v.id, [sc, ss]);
+        anglesRef.current.set(v.id, Math.atan2(ss, sc) * (180 / Math.PI));
+      } else {
+        angleVecRef.current.set(v.id, [nc, ns]);
+        anglesRef.current.set(v.id, b);
       }
-      prevPosRef.current.set(v.id, [v.x, v.y]);
     }
   }, [vehicles]);
 
@@ -562,13 +547,21 @@ export const MapViewer: React.FC<MapViewerProps> = ({
 
   const closePanel = useCallback(() => { setSelectedId(null); traceRef.current = []; }, []);
 
-  const toggle3D = useCallback(() => {
-    setIs3D(prev => {
-      const next = !prev;
-      setViewState(s => ({ ...s, pitch: next ? 45 : 0 }));
-      return next;
-    });
-  }, []);
+  useEffect(() => {
+    setViewState(s => ({ ...s, pitch: flat ? 0 : 45 }));
+
+    const map = mapRef.current;
+    if (!map?.getStyle || !map?.setLayoutProperty) return;
+    const style = map.getStyle();
+    if (!style?.layers) return;
+
+    const visibility = flat ? 'none' : 'visible';
+    for (const layer of style.layers) {
+      if (layer.type === 'fill-extrusion') {
+        map.setLayoutProperty(layer.id, 'visibility', visibility);
+      }
+    }
+  }, [flat]);
 
   const layers = useMemo(() => {
     void atlasReady;
@@ -738,9 +731,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           <span className="stat-label">Incl.</span>
           <span className="stat-value">{Math.round(viewState.pitch)}°</span>
         </div>
-        <button className={`btn-toggle-3d${is3D ? ' active' : ''}`} onClick={toggle3D} title="Basculer vue 3D / 2D">
-          {is3D ? 'Vue 2D' : 'Vue 3D'}
-        </button>
       </div>
 
       {selectedVehicle && (
