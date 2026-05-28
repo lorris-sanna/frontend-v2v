@@ -377,6 +377,7 @@ function App() {
   const [showIris, setShowIris] = useState(true)
   const [graphBBox, setGraphBBox] = useState<BBox | null>(null)
   const [irisOpacity, setIrisOpacity] = useState(0.5)
+  const [flatMap, setFlatMap] = useState(false)
   const [sideMenuOpen, setSideMenuOpen] = useState(true)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const lastFetchedIrisLoadIdRef = useRef<number>(-1)
@@ -627,6 +628,10 @@ function App() {
     })
   }, [sendCommand])
 
+  const handleFlatMapToggle = useCallback(() => {
+    setFlatMap(prev => !prev)
+  }, [])
+
   const handleIrisToggle = useCallback(() => {
     setShowIris(prev => !prev)
   }, [])
@@ -745,6 +750,23 @@ function App() {
                 </div>
               </div>
 
+              {/* Section affichage carte */}
+              <div className="menu-section">
+                <div className="menu-section-title">Affichage</div>
+                <div className="iris-controls">
+                  <label htmlFor="flat-map-toggle" className="iris-checkbox-label">
+                    <input
+                      id="flat-map-toggle"
+                      type="checkbox"
+                      checked={flatMap}
+                      onChange={handleFlatMapToggle}
+                      className="iris-checkbox"
+                    />
+                    Vue à plat (sans bâtiments 3D)
+                  </label>
+                </div>
+              </div>
+
               {/* Section gestion des IRIS */}
               <div className="menu-section">
                 <div className="menu-section-title">IRIS</div>
@@ -814,6 +836,7 @@ function App() {
               }}
               isSelectingBbox={isSelectingZone}
               onBboxSelected={handleBboxSelected}
+              flat={flatMap}
             />
             <button
               className={`side-menu-toggle ${sideMenuOpen ? 'open' : 'closed'}`}
