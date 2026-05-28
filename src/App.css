@@ -903,3 +903,124 @@
   font-size: 0.8rem;
   font-weight: 700;
 }
+
+@media (max-width: 1500px), (max-height: 860px) {
+  .side-menu-content {
+    padding: 14px 12px;
+    gap: 2px;
+  }
+
+  .menu-section {
+    padding: 10px;
+    gap: 10px;
+    margin-bottom: 10px;
+    border-radius: 9px;
+  }
+
+  .menu-section-title {
+    font-size: 0.68rem;
+    letter-spacing: 0.065em;
+  }
+
+  .menu-section-header {
+    margin-bottom: 6px;
+  }
+
+  .load-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .load-actions .btn,
+  .load-actions .loading-hint,
+  .load-actions .startup-hint {
+    grid-column: 1 / -1;
+  }
+
+  .load-actions .btn {
+    padding: 0.5rem 0.7rem;
+    font-size: 0.76rem;
+  }
+
+  .loading-hint,
+  .startup-hint {
+    font-size: 0.78rem;
+  }
+
+  .menu-simulation-controls {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 10px;
+  }
+
+  .ctrl-playpause {
+    grid-column: 1 / -1;
+    min-width: 0;
+    padding: 6px 12px;
+    font-size: 0.76rem;
+  }
+
+  .ctrl-speed-group,
+  .ctrl-vehicles-group {
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .ctrl-speed-label,
+  .ctrl-vehicles-count {
+    font-size: 0.7rem;
+  }
+
+  .ctrl-vehicles-slider {
+    height: 4px;
+  }
+
+  .ctrl-vehicles-slider::-webkit-slider-thumb {
+    width: 12px;
+    height: 12px;
+  }
+
+  .ctrl-vehicles-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+  }
+
+  .sim-state-badge {
+    font-size: 0.68rem;
+    padding: 3px 8px;
+  }
+
+  .iris-controls > div:first-child {
+    display: flex !important;
+    flex-direction: column;
+    gap: 14px !important;
+    margin-bottom: 12px !important;
+  }
+
+  .iris-controls > div:first-child .iris-checkbox-label {
+    align-items: center;
+    gap: 0.5rem;
+    white-space: normal;
+    font-size: 0.78rem;
+    line-height: 1.2;
+  }
+
+  .iris-controls > div:first-child .iris-checkbox {
+    margin-top: 0;
+  }
+
+  .iris-opacity-control {
+    gap: 6px;
+    padding: 6px 0 0;
+  }
+
+  .iris-opacity-control label,
+  .opacity-value {
+    font-size: 0.78rem;
+  }
+
+  .iris-opacity-slider {
+    height: 6px;
+  }
+}
