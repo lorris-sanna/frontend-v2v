@@ -67,6 +67,7 @@ const ICON_MAPPING = {
 const CAR_ANGLE_OFFSET = 90;
 
 const MAX_TRACE = 300;
+const MIN_DIST = 1e-6;
 
 const normalizeText = (value: unknown) =>
   String(value ?? '')
@@ -415,6 +416,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const atlasRef = useRef<HTMLCanvasElement | null>(null);
   const [atlasReady, setAtlasReady] = useState(false);
   const traceRef = useRef<Pos2[]>([]);
+  const prevPosRef = useRef<Map<number, Pos2>>(new Map());
   const anglesRef = useRef<Map<number, number>>(new Map());
   const angleVecRef = useRef<Map<number, [number, number]>>(new Map());
 
@@ -444,6 +446,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     }
 
     traceRef.current = [];
+    prevPosRef.current.clear();
     anglesRef.current.clear();
     angleVecRef.current.clear();
   }, [vehicles.length, selectedId]);
@@ -517,6 +520,7 @@ export const MapViewer: React.FC<MapViewerProps> = ({
             anglesRef.current.set(v.id, b);
           }
         }
+      }
       const b = v.angle;
       const rad = b * (Math.PI / 180);
       const nc = Math.cos(rad);
@@ -532,6 +536,8 @@ export const MapViewer: React.FC<MapViewerProps> = ({
         angleVecRef.current.set(v.id, [nc, ns]);
         anglesRef.current.set(v.id, b);
       }
+
+      prevPosRef.current.set(v.id, [v.x, v.y]);
     }
   }, [vehicles]);
 

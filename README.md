@@ -15,6 +15,17 @@ npm run dev
 
 Cela lance Vite sur `http://localhost:5173`
 
+## Données GeoJSON pour les IRIS
+
+Télécharger le fichier `iris.geojson` depuis ce lien :
+
+https://drive.google.com/file/d/1YRy9fpOtaU1Mm5rOa-D0zd8_3oXl-mUU/view?usp=drive_link
+
+Une fois téléchargé :
+
+1. Placer le fichier dans le dossier `frontend-v2v/public/`
+2. Renommer le fichier en `iris.geojson` (si nécessaire)
+
 ## Architecture
 
 ### Composants principaux
