@@ -50,6 +50,7 @@ interface MapViewerProps {
   onBboxSelected?: (bbox: BBoxSelection) => void;
   irisData?: IrisGeoJson | null;
   communeMotorizationByCode?: Map<string, number> | null;
+  dynamicIrisEnabled?: boolean;
   irisOpacity?: number;
 }
 
@@ -123,6 +124,111 @@ const extractFeatureCode = (feature: IrisFeature) => {
   return '';
 };
 
+const computeFeatureBounds = (geometry: unknown): BBoxSelection | null => {
+  if (!geometry || typeof geometry !== 'object') return null;
+  const coords = (geometry as any).coordinates;
+  if (!Array.isArray(coords)) return null;
+
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+
+  const flattenCoords = (arr: unknown[]) => {
+    if (!Array.isArray(arr)) return;
+    if (typeof arr[0] === 'number' && typeof arr[1] === 'number') {
+      if (arr[0] < minLon) minLon = arr[0];
+      if (arr[0] > maxLon) maxLon = arr[0];
+      if (arr[1] < minLat) minLat = arr[1];
+      if (arr[1] > maxLat) maxLat = arr[1];
+    } else {
+      arr.forEach(item => flattenCoords(item as unknown[]));
+    }
+  };
+  
+  flattenCoords(coords);
+  if (minLon === Infinity) return null;
+  return { minLon, minLat, maxLon, maxLat };
+};
+
+const pointInRing = (point: [number, number], ring: unknown): boolean => {
+  if (!Array.isArray(ring)) {
+    return false;
+  }
+
+  let inside = false;
+  const [x, y] = point;
+
+  for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index, index += 1) {
+    const currentPoint = ring[index];
+    const previousPoint = ring[previous];
+
+    if (
+      !Array.isArray(currentPoint) ||
+      !Array.isArray(previousPoint) ||
+      typeof currentPoint[0] !== 'number' ||
+      typeof currentPoint[1] !== 'number' ||
+      typeof previousPoint[0] !== 'number' ||
+      typeof previousPoint[1] !== 'number'
+    ) {
+      continue;
+    }
+
+    const currentX = currentPoint[0];
+    const currentY = currentPoint[1];
+    const previousX = previousPoint[0];
+    const previousY = previousPoint[1];
+
+    const intersects =
+      currentY > y !== previousY > y &&
+      x < ((previousX - currentX) * (y - currentY)) / (previousY - currentY) + currentX;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+};
+
+const pointInPolygon = (point: [number, number], polygon: unknown): boolean => {
+  if (!Array.isArray(polygon) || polygon.length === 0) {
+    return false;
+  }
+
+  if (!pointInRing(point, polygon[0])) {
+    return false;
+  }
+
+  for (let index = 1; index < polygon.length; index += 1) {
+    if (pointInRing(point, polygon[index])) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const pointInGeometry = (point: [number, number], geometry: unknown): boolean => {
+  if (!geometry || typeof geometry !== 'object') {
+    return false;
+  }
+
+  const typedGeometry = geometry as { type?: unknown; coordinates?: unknown; geometries?: unknown };
+  const type = String(typedGeometry.type ?? '').trim();
+
+  if (type === 'Polygon') {
+    return pointInPolygon(point, typedGeometry.coordinates);
+  }
+
+  if (type === 'MultiPolygon' && Array.isArray(typedGeometry.coordinates)) {
+    return typedGeometry.coordinates.some(polygon => pointInPolygon(point, polygon));
+  }
+
+  if (type === 'GeometryCollection' && Array.isArray(typedGeometry.geometries)) {
+    return typedGeometry.geometries.some(subGeometry => pointInGeometry(point, subGeometry));
+  }
+
+  return false;
+};
+
 const formatPercentage = (value: number | null) => {
   if (value === null || Number.isNaN(value)) {
     return 'indisponible';
@@ -153,6 +259,29 @@ const colorFromRate = (value: number | null) => {
   }
   
   return [189, 0, 38, alpha] as const;      //rouge fonce, enormement de voitures
+};
+
+const colorFromDynamicRate = (value: number | null) => {
+  if (value === null || Number.isNaN(value)) {
+    return [148, 163, 184, 80] as const;
+  }
+
+  const alpha = 170;
+
+  if (value < 1) {
+    return [255, 255, 178, alpha] as const;
+  }
+  if (value < 2.5) {
+    return [254, 204, 92, alpha] as const;
+  }
+  if (value < 5) {
+    return [253, 141, 60, alpha] as const;
+  }
+  if (value < 10) {
+    return [240, 59, 32, alpha] as const;
+  }
+  
+  return [189, 0, 38, alpha] as const;
 };
 
 function bearing(lon1: number, lat1: number, lon2: number, lat2: number): number {
@@ -253,12 +382,16 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   onBboxSelected,
   irisData,
   communeMotorizationByCode,
+  dynamicIrisEnabled = false,
   irisOpacity = 0.7,
 }) => {
   const hintsCenterLeft = `calc(50% + ${Math.max(0, sidebarVisibleWidth) / 2}px)`;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLike | null>(null);
+
+  const [hoveredIris, setHoveredIris] = useState<{ feature: IrisFeature; x: number; y: number } | null>(null);
+
   const [viewState, setViewState] = useState({
     longitude: initialLongitude,
     latitude: initialLatitude,
@@ -401,8 +534,84 @@ export const MapViewer: React.FC<MapViewerProps> = ({
     [vehicles, selectedId]
   );
 
+  const vehiclesRef = useRef(vehicles);
+  useEffect(() => {
+    vehiclesRef.current = vehicles;
+  }, [vehicles]);
+
+  const irisBoundsCache = useMemo(() => {
+    const cache = new Map<IrisFeature, BBoxSelection>();
+    
+    if (dynamicIrisEnabled && irisData?.features) {
+      for (const feature of irisData.features) {
+        const bounds = computeFeatureBounds((feature as any).geometry);
+        if (bounds) cache.set(feature, bounds);
+      }
+    }
+    return cache;
+  }, [irisData, dynamicIrisEnabled]);
+
+  const [dynamicIrisPresenceByCode, setDynamicIrisPresenceByCode] = useState<Map<string, { count: number; percentage: number }> | null>(null);
+
+  useEffect(() => {
+    if (!dynamicIrisEnabled || !irisData) {
+      setDynamicIrisPresenceByCode(null);
+      return;
+    }
+
+    const calculate = () => {
+      const currentVehicles = vehiclesRef.current;
+      const totalVehicles = currentVehicles.length;
+      
+      if (totalVehicles === 0) {
+        setDynamicIrisPresenceByCode(null);
+        return;
+      }
+
+      const valuesByCode = new Map<string, { count: number; percentage: number }>();
+
+      for (const feature of irisData.features) {
+        const codeIris = extractFeatureCode(feature);
+        if (!codeIris) continue;
+
+        let vehiclesInZone = 0;
+        const geometry = (feature as Record<string, unknown>).geometry;
+        const bounds = irisBoundsCache.get(feature);
+
+        for (const vehicle of currentVehicles) {
+          if (bounds) {
+            if (
+              vehicle.x < bounds.minLon || vehicle.x > bounds.maxLon ||
+              vehicle.y < bounds.minLat || vehicle.y > bounds.maxLat
+            ) {
+              continue; 
+            }
+          }
+          if (pointInGeometry([vehicle.x, vehicle.y], geometry)) {
+            vehiclesInZone += 1;
+          }
+        }
+
+        valuesByCode.set(codeIris, { 
+          count: vehiclesInZone, 
+          percentage: (vehiclesInZone / totalVehicles) * 100 
+        });
+      }
+      
+      setDynamicIrisPresenceByCode(valuesByCode);
+    };
+
+    calculate();
+
+    const intervalId = setInterval(calculate, 500);
+    return () => clearInterval(intervalId);
+    
+  }, [dynamicIrisEnabled, irisData, irisBoundsCache]);
+
+  const activeIrisMetricsByCode = dynamicIrisEnabled ? dynamicIrisPresenceByCode : communeMotorizationByCode;
+
   const irisLayer = useMemo(() => {
-    if (!irisData || !communeMotorizationByCode) {
+    if (!irisData || (!dynamicIrisEnabled && !communeMotorizationByCode)) {
       return null;
     }
 
@@ -413,23 +622,34 @@ export const MapViewer: React.FC<MapViewerProps> = ({
       stroked: true,
       filled: true,
       opacity: irisOpacity,
+      
       getFillColor: (feature: IrisFeature) => {
         const codeIris = extractFeatureCode(feature);
+        if (!codeIris) return [148, 163, 184, 80] as const;
 
-        if (!codeIris) {
-          return colorFromRate(null);
+        //mode dynamique
+        if (dynamicIrisEnabled && dynamicIrisPresenceByCode) {
+          const data = dynamicIrisPresenceByCode.get(codeIris);
+          return colorFromDynamicRate(data?.percentage ?? null);
+        } 
+        
+        //mode statique
+        if (!dynamicIrisEnabled && communeMotorizationByCode) {
+          return colorFromRate(communeMotorizationByCode.get(codeIris) ?? null);
         }
-
-        const rate = communeMotorizationByCode.get(codeIris) ?? null;
-        return colorFromRate(rate);
+        
+        return [148, 163, 184, 80] as const;
       },
       getLineColor: [20, 24, 39, 180],
       lineWidthMinPixels: 1,
       updateTriggers: {
-        getFillColor: [communeMotorizationByCode],
+        getFillColor: [
+          dynamicIrisEnabled,
+          dynamicIrisEnabled ? (dynamicIrisPresenceByCode ? Array.from(dynamicIrisPresenceByCode.values()) : []) : communeMotorizationByCode
+        ],
       },
     });
-  }, [communeMotorizationByCode, irisData, irisOpacity]);
+  }, [dynamicIrisEnabled, dynamicIrisPresenceByCode, communeMotorizationByCode, irisData, irisOpacity]);
 
   const getRelativePoint = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const container = containerRef.current;
@@ -684,8 +904,15 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           layers={layers}
           onViewStateChange={(e: any) => setViewState(e.viewState)}
           onClick={onDeckClick}
-          onHover={({ object, layer }: { object?: unknown; layer?: { id?: string } | null }) => {
+          onHover={(info: any) => {
+            const { object, layer, x, y } = info;
             setIsHoveringVehicle(Boolean(object && layer?.id === 'vehicles'));
+
+            if (layer?.id === 'iris-layer' && object) {
+              setHoveredIris({ feature: object as IrisFeature, x, y });
+            } else {
+              setHoveredIris(null);
+            }
           }}
           style={{ width: '100%', height: '100%' }}
           getCursor={({ isDragging }: { isDragging: boolean }) =>
@@ -697,36 +924,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
                   ? 'pointer'
                   : 'grab'
           }
-          getTooltip={({ object, layer }: { object?: IrisFeature | null; layer?: { id?: string } | null }) => {
-            if (!object || !communeMotorizationByCode || layer?.id !== 'iris-layer') {
-              return null;
-            }
-
-            const codeIris = extractFeatureCode(object as IrisFeature);
-
-            if (!codeIris) {
-              return null;
-            }
-
-            const rate = communeMotorizationByCode.get(codeIris) ?? null;
-
-            if (rate === null || Number.isNaN(rate)) {
-              return {
-                html: `<div style="font-style: italic; opacity: 0.8;">Données indisponibles pour cette zone</div>`
-              };
-            }
-
-            return {
-              html: `
-                <div style="font-weight:700; font-size:2.0em; margin-bottom:2px; color:#38bdf8;">
-                  ${formatPercentage(rate)}
-                </div>
-                <div style="font-size:1.3em; opacity:0.9;">
-                  des foyers possèdent au moins une voiture
-                </div>
-              `,
-            };
-          }}
         />
       </MapGL>
 
@@ -860,6 +1057,65 @@ export const MapViewer: React.FC<MapViewerProps> = ({
           }}
         >
           Clic sur un véhicule pour le sélectionner · Clic sur la carte pour en ajouter un
+        </div>
+      )}
+
+      {hoveredIris && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1000,
+            pointerEvents: 'none',
+            left: hoveredIris.x,
+            top: hoveredIris.y,
+            transform: 'translate(15px, 15px)',
+            background: 'rgba(0, 0, 0, 0.85)',
+            color: '#fff',
+            padding: '12px',
+            borderRadius: '6px',
+            fontFamily: 'sans-serif',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.3)',
+          }}
+        >
+          {(() => {
+            const codeIris = extractFeatureCode(hoveredIris.feature);
+            if (!codeIris) return null;
+
+            if (dynamicIrisEnabled && dynamicIrisPresenceByCode) {
+              const data = dynamicIrisPresenceByCode.get(codeIris);
+              if (!data) return <div style={{ fontStyle: 'italic', opacity: 0.8 }}>Zone vide</div>;
+
+              return (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: '1.6em', marginBottom: '2px', color: '#38bdf8' }}>
+                    {data.count} <span style={{ fontSize: '0.6em', fontWeight: 400, color: '#cbd5e1' }}>véhicules</span>
+                  </div>
+                  <div style={{ fontSize: '0.95em', opacity: 0.9 }}>
+                    Soit {formatPercentage(data.percentage)} du trafic total
+                  </div>
+                </>
+              );
+            }
+
+            if (!dynamicIrisEnabled && communeMotorizationByCode) {
+              const rate = communeMotorizationByCode.get(codeIris) ?? null;
+              if (rate === null || Number.isNaN(rate)) {
+                return <div style={{ fontStyle: 'italic', opacity: 0.8 }}>Données indisponibles</div>;
+              }
+              return (
+                <>
+                  <div style={{ fontWeight: 700, fontSize: '1.6em', marginBottom: '2px', color: '#38bdf8' }}>
+                    {formatPercentage(rate)}
+                  </div>
+                  <div style={{ fontSize: '1.0em', opacity: 0.9 }}>
+                    des foyers possèdent au moins une voiture
+                  </div>
+                </>
+              );
+            }
+
+            return null;
+          })()}
         </div>
       )}
 
