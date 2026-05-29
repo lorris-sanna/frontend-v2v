@@ -810,8 +810,6 @@ export const MapViewer: React.FC<MapViewerProps> = ({
   const closePanel = useCallback(() => { setSelectedId(null); traceRef.current = []; }, []);
 
   useEffect(() => {
-    setViewState(s => ({ ...s, pitch: flat ? 0 : 45 }));
-
     const map = mapRef.current;
     if (!map?.getStyle || !map?.setLayoutProperty) return;
     const style = map.getStyle();
