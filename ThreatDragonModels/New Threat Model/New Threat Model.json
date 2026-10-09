@@ -1,10 +1,10 @@
 {
   "version": "2.6.2",
-  "release_version": "",
-  "released_at": "",
+  "release_version": "1",
+  "released_at": "2026-10-09",
   "summary": {
     "title": "New Threat Model",
-    "owner": "",
+    "owner": "Lorris",
     "description": "",
     "id": 0
   },
@@ -12,7 +12,7 @@
     "contributors": [],
     "diagrams": [],
     "diagramTop": 0,
-    "reviewer": "",
+    "reviewer": "Lorris",
     "threatTop": 0
   }
 }
